@@ -16,6 +16,11 @@ const Square = struct {
         return .{ .idx = (addr[1] - '1') * 8 + addr[0] - 'a' };
     }
 
+    fn get(idx: u8) Square {
+        assert(idx > 0 and idx < 64);
+        return .{ .idx = idx };
+    }
+
     fn file(self: Square) u3 {
         return @truncate(self.idx % 8);
     }
@@ -24,11 +29,30 @@ const Square = struct {
         return @truncate(self.idx / 8);
     }
 
+    fn file_str(self: Square) u8 {
+        return @as(u8, 'a') + self.file();
+    }
+
+    fn rank_str(self: Square) u8 {
+        return @as(u8, '1') + self.rank();
+    }
+
     fn str(self: Square) [2]u8 {
         return .{
-            @as(u8, 'a') + self.file(),
-            @as(u8, '1') + self.rank(),
+            self.file_str(),
+            self.rank_str(),
         };
+    }
+
+    // locate a square shifted relative to the current one, null if out of bounds
+    fn rel(self: Square, file_shift: i8, rank_shift: i8) ?Square {
+        const target_rank: i16 = self.rank() + rank_shift;
+        if (target_rank < 0 or target_rank > 7) return null;
+
+        const target_file: i16 = self.file() + file_shift;
+        if (target_file < 0 or target_file > 7) return null;
+
+        return .{ .idx = @as(u8, @intCast(target_rank * 8)) + @as(u8, @intCast(target_file)) };
     }
 
     // get bitmask for bitwise operations with bitboard
@@ -87,6 +111,15 @@ const Piece = enum(u3) {
 const Move = struct {
     from: Square,
     to: Square,
+
+    fn str(self: Move) [4]u8 {
+        return [4]u8{
+            self.from.file_str(),
+            self.from.rank_str(),
+            self.to.file_str(),
+            self.to.rank_str(),
+        };
+    }
 };
 
 const MoveList = struct {
@@ -94,7 +127,7 @@ const MoveList = struct {
     len: u8 = 0,
 
     fn append(self: *MoveList, from: Square, to: Square) void {
-        self.moves[self.len + 1] = .{ .from = from, .to = to };
+        self.moves[self.len] = .{ .from = from, .to = to };
         self.len += 1;
     }
 };
@@ -166,24 +199,50 @@ const Position = struct {
             std.debug.print("\n", .{});
         }
     }
+
+    fn occupied(self: *const Position) u64 {
+        var result: u64 = 0;
+        inline for (0..2) |ci| {
+            inline for (std.enums.values(Piece)) |piece| {
+                result |= self.pieces[ci][piece.idx()];
+            }
+        }
+
+        return result;
+    }
 };
 
-pub fn run() void {
-    const position = Position.start();
-    position.print();
+fn generateMoves(pos: *const Position, out: *MoveList) void {
+    var idx: u8 = 0;
+    while (idx < 64) : (idx += 1) {
+        if ((@as(u64, 1) << @intCast(idx)) & pos.pieces[pos.side_to_move.idx()][Piece.Pawn.idx()] != 0) {
+            _ = generatePawnMoves(.get(idx), pos, out);
+        }
+    }
 }
 
-fn generateMoves(pos: Position, out: *MoveList) void {
-    _ = pos;
-    _ = out;
-}
-
-fn generatePawnMoves(square: Square, pos: Position, out: *MoveList) u8 {
+fn generatePawnMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
     assert(square.mask() & pos.pieces[pos.side_to_move.idx()][Piece.Pawn.idx()] != 0);
+    var n: u8 = 0;
 
-    _ = square.file();
-    _ = out;
-    return 0;
+    const occupied = pos.occupied();
+
+    switch (pos.side_to_move) {
+        .White => {
+            assert(square.rank() < 7);
+            // regular step
+            const target = square.rel(0, 1);
+            if (target != null and occupied & target.?.mask() == 0) {
+                out.append(.get(square.idx), .get(target.?.idx));
+                n += 1;
+            }
+        },
+        .Black => {
+            assert(square.rank() > 0);
+        },
+    }
+
+    return n;
 }
 
 test "pawn_moves" {
@@ -192,5 +251,30 @@ test "pawn_moves" {
 
     var move_list: MoveList = .{};
 
-    _ = generatePawnMoves(square, pos, &move_list);
+    const n = generatePawnMoves(square, &pos, &move_list);
+    try t.expect(n > 0);
+    try t.expect(move_list.len > 0);
+
+    const first = move_list.moves[0];
+
+    try t.expectEqualStrings(&first.from.str(), "e2");
+    try t.expectEqualStrings(&first.to.str(), "e3");
+
+    for (0..move_list.len) |i| {
+        std.debug.print("{s}\n", .{move_list.moves[i].str()});
+    }
+}
+
+pub fn run() void {
+    const position = Position.start();
+    // position.print();
+    //
+    var move_list: MoveList = .{};
+    generateMoves(&position, &move_list);
+
+    std.debug.print("moves: {}\n", .{move_list.len});
+
+    for (0..move_list.len) |i| {
+        std.debug.print("{s}\n", .{move_list.moves[i].str()});
+    }
 }
