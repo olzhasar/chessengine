@@ -306,6 +306,36 @@ fn generatePawnMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
     return n;
 }
 
+fn generateKnightMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
+    assert(square.mask() & pos.pieces[pos.side_to_move.idx()][Piece.Knight.idx()] != 0);
+    var n: u8 = 0;
+    const occupied = pos.occupied();
+    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
+
+    const directions = [_]struct { x: i8, y: i8 }{
+        .{ .x = -1, .y = 2 },
+        .{ .x = 1, .y = 2 },
+        .{ .x = -1, .y = -2 },
+        .{ .x = 1, .y = -2 },
+        .{ .x = -2, .y = 1 },
+        .{ .x = -2, .y = -1 },
+        .{ .x = 2, .y = 1 },
+        .{ .x = 2, .y = -1 },
+    };
+
+    for (&directions) |dir| {
+        const target = square.rel(dir.x, dir.y);
+        if (target == null) continue;
+
+        if (target.?.mask() & occupied == 0 or target.?.mask() & occupied_enemy != 0) {
+            out.append(square, target.?);
+            n += 1;
+        }
+    }
+
+    return n;
+}
+
 test "pawn_moves" {
     const pos = Position.start();
     const square = Square.at("e2");
@@ -372,6 +402,47 @@ test "pawn_capture" {
     try t.expect(move_list.has("e2e4"));
     try t.expect(move_list.has("e2d3"));
     try t.expect(move_list.has("e2f3"));
+}
+
+test "knight" {
+    var pos = Position.init(.White);
+    pos.put(.White, .Knight, "e4");
+
+    var move_list = MoveList{};
+    const n = generateKnightMoves(.at("e4"), &pos, &move_list);
+
+    try t.expectEqual(8, n);
+    try t.expectEqual(8, move_list.len);
+
+    try t.expect(move_list.has("e4d6"));
+    try t.expect(move_list.has("e4f6"));
+    try t.expect(move_list.has("e4c5"));
+    try t.expect(move_list.has("e4g5"));
+    try t.expect(move_list.has("e4c5"));
+    try t.expect(move_list.has("e4g5"));
+    try t.expect(move_list.has("e4c3"));
+    try t.expect(move_list.has("e4g3"));
+    try t.expect(move_list.has("e4d2"));
+    try t.expect(move_list.has("e4f2"));
+}
+
+test "knight_2" {
+    var pos = Position.init(.White);
+    pos.put(.White, .Knight, "g4");
+    pos.put(.White, .Queen, "f2");
+    pos.put(.White, .King, "h2");
+    pos.put(.Black, .Bishop, "f6");
+
+    var move_list = MoveList{};
+    const n = generateKnightMoves(.at("g4"), &pos, &move_list);
+
+    try t.expectEqual(4, n);
+    try t.expectEqual(4, move_list.len);
+
+    try t.expect(move_list.has("g4f6"));
+    try t.expect(move_list.has("g4h6"));
+    try t.expect(move_list.has("g4e5"));
+    try t.expect(move_list.has("g4e3"));
 }
 
 pub fn run() void {
