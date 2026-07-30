@@ -102,14 +102,24 @@ const Piece = enum(u3) {
     Queen,
     King,
 
-    fn symbol(self: Piece) u8 {
-        return switch (self) {
-            Piece.Pawn => 'P',
-            Piece.Knight => 'N',
-            Piece.Bishop => 'B',
-            Piece.Rook => 'R',
-            Piece.Queen => 'Q',
-            Piece.King => 'K',
+    fn symbol(self: Piece, color: Color) u21 {
+        return switch (color) {
+            .Black => switch (self) {
+                Piece.Pawn => 0x2659,
+                Piece.Knight => 0x2658,
+                Piece.Bishop => 0x2657,
+                Piece.Rook => 0x2656,
+                Piece.Queen => 0x2655,
+                Piece.King => 0x2654,
+            },
+            .White => switch (self) {
+                Piece.Pawn => 0x265F,
+                Piece.Knight => 0x265E,
+                Piece.Bishop => 0x265D,
+                Piece.Rook => 0x265C,
+                Piece.Queen => 0x265B,
+                Piece.King => 0x265A,
+            },
         };
     }
 
@@ -221,7 +231,7 @@ const Position = struct {
     }
 
     fn print(self: *const Position) void {
-        var piece_mask: [64]u8 = @splat(32);
+        var piece_mask: [64]u21 = @splat(32);
         var color_mask: [64]u8 = @splat(32);
 
         inline for (std.enums.values(Color), 0..) |col, ci| {
@@ -230,23 +240,23 @@ const Position = struct {
 
                 for (0..64) |i| {
                     if ((bitmask >> @truncate(i)) & 1 == 1) {
-                        piece_mask[i] = piece.symbol();
+                        piece_mask[i] = piece.symbol(col);
                         color_mask[i] = col.symbol();
                     }
                 }
             }
         }
 
-        std.debug.print("-" ** 41, .{});
+        std.debug.print("-" ** 33, .{});
         std.debug.print("\n", .{});
         for (0..8) |r| {
             std.debug.print("|", .{});
             for (0..8) |f| {
                 const idx = (7 - r) * 8 + f;
-                std.debug.print(" {c}{c} |", .{ color_mask[idx], piece_mask[idx] });
+                std.debug.print(" {u} |", .{piece_mask[idx]});
             }
             std.debug.print("\n", .{});
-            std.debug.print("-" ** 41, .{});
+            std.debug.print("-" ** 33, .{});
             std.debug.print("\n", .{});
         }
     }
