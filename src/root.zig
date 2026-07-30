@@ -18,6 +18,10 @@ const Color = enum(u1) {
         if (self == .White) return .Black;
         return .White;
     }
+
+    fn symbol(self: Color) u8 {
+        if (self == .White) return 'W' else return 'B';
+    }
 };
 
 // square address 0-63
@@ -143,6 +147,27 @@ const MoveList = struct {
         }
         return false;
     }
+
+    fn print(self: *const MoveList) void {
+        var buf: [64]u8 = @splat(32);
+
+        for (0..self.len) |i| {
+            buf[self.moves[i].to.idx] = 'X';
+        }
+
+        std.debug.print("-" ** 33, .{});
+        std.debug.print("\n", .{});
+        for (0..8) |r| {
+            std.debug.print("|", .{});
+            for (0..8) |f| {
+                const idx = (7 - r) * 8 + f;
+                std.debug.print(" {c} |", .{buf[idx]});
+            }
+            std.debug.print("\n", .{});
+            std.debug.print("-" ** 33, .{});
+            std.debug.print("\n", .{});
+        }
+    }
 };
 
 const Position = struct {
@@ -196,32 +221,32 @@ const Position = struct {
     }
 
     fn print(self: *const Position) void {
-        var buf: [8][8]u8 = undefined;
-        for (0..64) |i| {
-            buf[i / 8][i % 8] = 32;
-        }
+        var piece_mask: [64]u8 = @splat(32);
+        var color_mask: [64]u8 = @splat(32);
 
-        inline for (0..2) |ci| {
+        inline for (std.enums.values(Color), 0..) |col, ci| {
             inline for (std.enums.values(Piece), 0..) |piece, pi| {
                 const bitmask = self.pieces[ci][pi];
 
                 for (0..64) |i| {
                     if ((bitmask >> @truncate(i)) & 1 == 1) {
-                        buf[i / 8][i % 8] = piece.symbol();
+                        piece_mask[i] = piece.symbol();
+                        color_mask[i] = col.symbol();
                     }
                 }
             }
         }
 
-        std.debug.print("-" ** 33, .{});
+        std.debug.print("-" ** 41, .{});
         std.debug.print("\n", .{});
         for (0..8) |r| {
             std.debug.print("|", .{});
-            for (0..8) |c| {
-                std.debug.print(" {c} |", .{buf[r][c]});
+            for (0..8) |f| {
+                const idx = (7 - r) * 8 + f;
+                std.debug.print(" {c}{c} |", .{ color_mask[idx], piece_mask[idx] });
             }
             std.debug.print("\n", .{});
-            std.debug.print("-" ** 33, .{});
+            std.debug.print("-" ** 41, .{});
             std.debug.print("\n", .{});
         }
     }
