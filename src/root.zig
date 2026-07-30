@@ -296,7 +296,6 @@ fn generatePawnMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
         if (pos.side_to_move == .White and square.rank() != 1) break :blk;
         if (pos.side_to_move == .Black and square.rank() != 6) break :blk;
 
-        // FIXME: check next block
         const next = if (pos.side_to_move == .White) square.rel(0, 1) else square.rel(0, -1);
         if (occupied & next.?.mask() != 0) break :blk;
 
@@ -433,6 +432,38 @@ fn generateRookMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
 
 fn generateQueenMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
     return generateRookMoves(from, pos, out) + generateBishopMoves(from, pos, out);
+}
+
+fn generateKingMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
+    var n: u8 = 0;
+
+    const directions = [_]struct { x: i8, y: i8 }{
+        .{ .x = 1, .y = 0 },
+        .{ .x = -1, .y = 0 },
+        .{ .x = 0, .y = 1 },
+        .{ .x = 0, .y = -1 },
+        .{ .x = 1, .y = -1 },
+        .{ .x = 1, .y = 1 },
+        .{ .x = -1, .y = 1 },
+        .{ .x = -1, .y = -1 },
+    };
+
+    const occupied = pos.occupied();
+    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
+
+    for (&directions) |*dir| {
+        const target = from.rel(dir.x, dir.y);
+        if (target == null) {
+            continue;
+        }
+
+        if (target.?.mask() & occupied == 0 or target.?.mask() & occupied_enemy != 0) {
+            out.append(from, target.?);
+            n += 1;
+        }
+    }
+
+    return n;
 }
 
 test "pawn_moves" {
@@ -645,6 +676,46 @@ test "queen" {
 
     try t.expectEqual(6, n);
     try t.expectEqual(6, move_list.len);
+}
+
+test "king" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, "e4");
+
+    var move_list = MoveList{};
+    const n = generateKingMoves(.at("e4"), &pos, &move_list);
+
+    try t.expectEqual(8, n);
+    try t.expectEqual(8, move_list.len);
+
+    try t.expect(move_list.has("e4e5"));
+    try t.expect(move_list.has("e4d5"));
+    try t.expect(move_list.has("e4f5"));
+    try t.expect(move_list.has("e4d4"));
+    try t.expect(move_list.has("e4f4"));
+    try t.expect(move_list.has("e4d3"));
+    try t.expect(move_list.has("e4e3"));
+    try t.expect(move_list.has("e4f3"));
+}
+
+test "king_2" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, "e1");
+
+    pos.put(.White, .Queen, "d1");
+    pos.put(.White, .Pawn, "e2");
+
+    pos.put(.Black, .Pawn, "d2");
+
+    var move_list = MoveList{};
+    const n = generateKingMoves(.at("e1"), &pos, &move_list);
+
+    try t.expectEqual(3, n);
+    try t.expectEqual(3, move_list.len);
+
+    try t.expect(move_list.has("e1d2"));
+    try t.expect(move_list.has("e1f1"));
+    try t.expect(move_list.has("e1f2"));
 }
 
 pub fn run() void {
