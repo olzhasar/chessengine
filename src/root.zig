@@ -336,6 +336,42 @@ fn generateKnightMoves(square: Square, pos: *const Position, out: *MoveList) u8 
     return n;
 }
 
+fn generateBishopMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
+    assert(from.mask() & pos.pieces[pos.side_to_move.idx()][Piece.Bishop.idx()] != 0);
+
+    var n: u8 = 0;
+
+    const occupied = pos.occupied();
+    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
+
+    const directions = [_]struct { x: i8, y: i8 }{
+        .{ .x = -1, .y = 1 },
+        .{ .x = 1, .y = 1 },
+        .{ .x = -1, .y = -1 },
+        .{ .x = 1, .y = -1 },
+    };
+
+    outer: for (&directions) |*dir| {
+        for (0..8) |i| {
+            const target = from.rel(@as(i8, @intCast(i)) * dir.x, @as(i8, @intCast(i)) * dir.y);
+            if (target == null) {
+                continue :outer;
+            }
+
+            if (target.?.mask() & occupied == 0) {
+                out.append(from, target.?);
+                n += 1;
+            } else if (target.?.mask() & occupied_enemy != 0) {
+                out.append(from, target.?);
+                n += 1;
+                continue :outer;
+            }
+        }
+    }
+
+    return n;
+}
+
 test "pawn_moves" {
     const pos = Position.start();
     const square = Square.at("e2");
@@ -357,8 +393,8 @@ test "pawn_step_starting" {
     var move_list = MoveList{};
     const n = generatePawnMoves(.at("e2"), &pos, &move_list);
 
-    try t.expectEqual(n, 2);
-    try t.expectEqual(move_list.len, 2);
+    try t.expectEqual(2, n);
+    try t.expectEqual(2, move_list.len);
 
     try t.expect(move_list.has("e2e3"));
     try t.expect(move_list.has("e2e4"));
@@ -371,7 +407,7 @@ test "pawn_step_not_starting" {
     var move_list = MoveList{};
     const n = generatePawnMoves(.at("e3"), &pos, &move_list);
 
-    try t.expectEqual(n, 1);
+    try t.expectEqual(1, n);
 
     try t.expect(move_list.has("e3e4"));
 }
@@ -384,7 +420,7 @@ test "pawn_step_blocked" {
     var move_list = MoveList{};
     const n = generatePawnMoves(.at("e2"), &pos, &move_list);
 
-    try t.expectEqual(n, 0);
+    try t.expectEqual(0, n);
 }
 
 test "pawn_capture" {
@@ -443,6 +479,49 @@ test "knight_2" {
     try t.expect(move_list.has("g4h6"));
     try t.expect(move_list.has("g4e5"));
     try t.expect(move_list.has("g4e3"));
+}
+
+test "bishop" {
+    var pos = Position.init(.White);
+    pos.put(.White, .Bishop, "e4");
+
+    var move_list = MoveList{};
+    const n = generateBishopMoves(.at("e4"), &pos, &move_list);
+
+    try t.expectEqual(13, n);
+    try t.expectEqual(13, move_list.len);
+
+    try t.expect(move_list.has("e4f5"));
+    try t.expect(move_list.has("e4g6"));
+    try t.expect(move_list.has("e4h7"));
+    try t.expect(move_list.has("e4f3"));
+    try t.expect(move_list.has("e4g2"));
+    try t.expect(move_list.has("e4h1"));
+    try t.expect(move_list.has("e4d5"));
+    try t.expect(move_list.has("e4c6"));
+    try t.expect(move_list.has("e4b7"));
+    try t.expect(move_list.has("e4a8"));
+    try t.expect(move_list.has("e4d3"));
+    try t.expect(move_list.has("e4c2"));
+    try t.expect(move_list.has("e4b1"));
+}
+
+test "bishop_2" {
+    var pos = Position.init(.White);
+    pos.put(.White, .Bishop, "g2");
+
+    pos.put(.Black, .Knight, "f3");
+    pos.put(.White, .Rook, "h1");
+
+    var move_list = MoveList{};
+    const n = generateBishopMoves(.at("g2"), &pos, &move_list);
+
+    try t.expectEqual(3, n);
+    try t.expectEqual(3, move_list.len);
+
+    try t.expect(move_list.has("g2h3"));
+    try t.expect(move_list.has("g2f1"));
+    try t.expect(move_list.has("g2f3"));
 }
 
 pub fn run() void {
