@@ -5,6 +5,21 @@ const t = std.testing;
 // [color][piece type] bitmasks. LSB (bit 0) - a1, MSB (bit 63) - h8.
 const Bitboard = [2][6]u64;
 
+const Color = enum(u1) {
+    White,
+    Black,
+
+    fn idx(self: Color) usize {
+        return @intFromEnum(self);
+    }
+
+    // get the opposite color
+    fn opp(self: Color) Color {
+        if (self == .White) return .Black;
+        return .White;
+    }
+};
+
 // square address 0-63
 const Square = struct {
     idx: u8,
@@ -75,15 +90,6 @@ test "square_from_addr" {
     }
 }
 
-const Color = enum(u1) {
-    White,
-    Black,
-
-    fn idx(self: Color) usize {
-        return @intFromEnum(self);
-    }
-};
-
 const Piece = enum(u3) {
     Pawn,
     Knight,
@@ -135,6 +141,11 @@ const MoveList = struct {
 const Position = struct {
     pieces: Bitboard,
     side_to_move: Color,
+
+    // the enemy (opposite) of the current side_to_move
+    fn side_enemy(self: *const Position) Color {
+        return self.side_to_move.opp();
+    }
 
     fn empty() Position {
         return .{
@@ -201,11 +212,13 @@ const Position = struct {
     }
 
     fn occupied(self: *const Position) u64 {
+        return self.occupiedBy(.White) | self.occupiedBy(.Black);
+    }
+
+    fn occupiedBy(self: *const Position, color: Color) u64 {
         var result: u64 = 0;
-        inline for (0..2) |ci| {
-            inline for (std.enums.values(Piece)) |piece| {
-                result |= self.pieces[ci][piece.idx()];
-            }
+        inline for (std.enums.values(Piece)) |piece| {
+            result |= self.pieces[color.idx()][piece.idx()];
         }
 
         return result;
@@ -226,21 +239,51 @@ fn generatePawnMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
     var n: u8 = 0;
 
     const occupied = pos.occupied();
+    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
 
-    switch (pos.side_to_move) {
-        .White => {
-            assert(square.rank() < 7);
-            // regular step
-            const target = square.rel(0, 1);
-            if (target != null and occupied & target.?.mask() == 0) {
-                out.append(.get(square.idx), .get(target.?.idx));
-                n += 1;
-            }
-        },
-        .Black => {
-            assert(square.rank() > 0);
-        },
+    // step one
+    {
+        const step: i8 = if (pos.side_to_move == .White) 1 else -1;
+        const target = square.rel(0, step);
+
+        if (target != null and occupied & target.?.mask() == 0) {
+            out.append(.get(square.idx), .get(target.?.idx));
+            n += 1;
+        }
     }
+
+    // step two
+    blk: {
+        if (pos.side_to_move == .White and square.rank() != 1) break :blk;
+        if (pos.side_to_move == .Black and square.rank() != 6) break :blk;
+
+        // FIXME: check next block
+        const target = if (pos.side_to_move == .White) square.rel(0, 2) else square.rel(0, -2);
+
+        if (target != null and occupied & target.?.mask() == 0) {
+            out.append(.get(square.idx), .get(target.?.idx));
+            n += 1;
+        }
+    }
+
+    // capture left
+    {
+        const target = if (pos.side_to_move == .White) square.rel(-1, 1) else square.rel(1, -1);
+        if (target != null and occupied_enemy & target.?.mask() == 1) {
+            out.append(.get(square.idx), .get(target.?.idx));
+            n += 1;
+        }
+    }
+    // capture right
+    {
+        const target = if (pos.side_to_move == .White) square.rel(-1, -1) else square.rel(1, 1);
+        if (target != null and occupied_enemy & target.?.mask() == 1) {
+            out.append(.get(square.idx), .get(target.?.idx));
+            n += 1;
+        }
+    }
+
+    // TODO: promotions
 
     return n;
 }
@@ -252,17 +295,11 @@ test "pawn_moves" {
     var move_list: MoveList = .{};
 
     const n = generatePawnMoves(square, &pos, &move_list);
-    try t.expect(n > 0);
-    try t.expect(move_list.len > 0);
+    try t.expectEqual(2, n);
+    try t.expectEqual(2, move_list.len);
 
-    const first = move_list.moves[0];
-
-    try t.expectEqualStrings(&first.from.str(), "e2");
-    try t.expectEqualStrings(&first.to.str(), "e3");
-
-    for (0..move_list.len) |i| {
-        std.debug.print("{s}\n", .{move_list.moves[i].str()});
-    }
+    try t.expectEqualStrings(&move_list.moves[0].str(), "e2e3");
+    try t.expectEqualStrings(&move_list.moves[1].str(), "e2e4");
 }
 
 pub fn run() void {
