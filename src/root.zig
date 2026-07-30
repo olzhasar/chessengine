@@ -191,7 +191,7 @@ const Position = struct {
 
     fn put(self: *Position, color: Color, piece: Piece, addr: *const [2]u8) void {
         const square = Square.at(addr);
-        assert(self.occupied() & square.idx == 0);
+        assert(self.occupied() & square.mask() == 0);
 
         self.pieces[color.idx()][piece.idx()] |= square.mask();
     }
@@ -275,7 +275,6 @@ fn generateMoves(pos: *const Position, out: *MoveList) void {
 }
 
 fn generatePawnMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
-    assert(square.mask() & pos.pieces[pos.side_to_move.idx()][Piece.Pawn.idx()] != 0);
     var n: u8 = 0;
 
     const occupied = pos.occupied();
@@ -332,7 +331,6 @@ fn generatePawnMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
 }
 
 fn generateKnightMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
-    assert(square.mask() & pos.pieces[pos.side_to_move.idx()][Piece.Knight.idx()] != 0);
     var n: u8 = 0;
     const occupied = pos.occupied();
     const occupied_enemy = pos.occupiedBy(pos.side_enemy());
@@ -362,8 +360,6 @@ fn generateKnightMoves(square: Square, pos: *const Position, out: *MoveList) u8 
 }
 
 fn generateBishopMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
-    assert(from.mask() & pos.pieces[pos.side_to_move.idx()][Piece.Bishop.idx()] != 0);
-
     var n: u8 = 0;
 
     const occupied = pos.occupied();
@@ -400,8 +396,6 @@ fn generateBishopMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
 }
 
 fn generateRookMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
-    assert(from.mask() & pos.pieces[pos.side_to_move.idx()][Piece.Rook.idx()] != 0);
-
     var n: u8 = 0;
 
     const directions = [_]struct { x: i8, y: i8 }{
@@ -435,6 +429,10 @@ fn generateRookMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
     }
 
     return n;
+}
+
+fn generateQueenMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
+    return generateRookMoves(from, pos, out) + generateBishopMoves(from, pos, out);
 }
 
 test "pawn_moves" {
@@ -631,6 +629,22 @@ test "rook_2" {
     try t.expect(move_list.has("g2g3"));
     try t.expect(move_list.has("g2h2"));
     try t.expect(move_list.has("g2g1"));
+}
+
+test "queen" {
+    var pos = Position.init(.White);
+    pos.put(.White, .Queen, "d1");
+
+    pos.put(.White, .Pawn, "d3");
+    pos.put(.Black, .Pawn, "c2");
+    pos.put(.White, .Bishop, "c1");
+    pos.put(.White, .King, "e1");
+
+    var move_list = MoveList{};
+    const n = generateQueenMoves(.at("d1"), &pos, &move_list);
+
+    try t.expectEqual(6, n);
+    try t.expectEqual(6, move_list.len);
 }
 
 pub fn run() void {
