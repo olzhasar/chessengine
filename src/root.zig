@@ -376,20 +376,60 @@ fn generateBishopMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
         .{ .x = 1, .y = -1 },
     };
 
-    outer: for (&directions) |*dir| {
-        for (0..8) |i| {
+    for (&directions) |*dir| {
+        inner: for (1..8) |i| {
             const target = from.rel(@as(i8, @intCast(i)) * dir.x, @as(i8, @intCast(i)) * dir.y);
             if (target == null) {
-                continue :outer;
+                break :inner;
             }
 
             if (target.?.mask() & occupied == 0) {
                 out.append(from, target.?);
                 n += 1;
-            } else if (target.?.mask() & occupied_enemy != 0) {
+            } else {
+                if (target.?.mask() & occupied_enemy != 0) {
+                    out.append(from, target.?);
+                    n += 1;
+                }
+                break :inner;
+            }
+        }
+    }
+
+    return n;
+}
+
+fn generateRookMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
+    assert(from.mask() & pos.pieces[pos.side_to_move.idx()][Piece.Rook.idx()] != 0);
+
+    var n: u8 = 0;
+
+    const directions = [_]struct { x: i8, y: i8 }{
+        .{ .x = 1, .y = 0 },
+        .{ .x = -1, .y = 0 },
+        .{ .x = 0, .y = 1 },
+        .{ .x = 0, .y = -1 },
+    };
+
+    const occupied = pos.occupied();
+    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
+
+    for (&directions) |*dir| {
+        inner: for (1..8) |i| {
+            const target = from.rel(@as(i8, @intCast(i)) * dir.x, @as(i8, @intCast(i)) * dir.y);
+            if (target == null) {
+                break :inner;
+            }
+
+            if (target.?.mask() & occupied == 0) {
                 out.append(from, target.?);
                 n += 1;
-                continue :outer;
+            } else {
+                if (target.?.mask() & occupied_enemy != 0) {
+                    out.append(from, target.?);
+                    n += 1;
+                }
+                break :inner;
             }
         }
     }
@@ -549,10 +589,54 @@ test "bishop_2" {
     try t.expect(move_list.has("g2f3"));
 }
 
+test "rook" {
+    var pos = Position.init(.White);
+    pos.put(.White, .Rook, "e4");
+
+    var move_list = MoveList{};
+    const n = generateRookMoves(.at("e4"), &pos, &move_list);
+
+    try t.expectEqual(14, n);
+    try t.expectEqual(14, move_list.len);
+
+    try t.expect(move_list.has("e4e5"));
+    try t.expect(move_list.has("e4e6"));
+    try t.expect(move_list.has("e4e7"));
+    try t.expect(move_list.has("e4e8"));
+    try t.expect(move_list.has("e4e3"));
+    try t.expect(move_list.has("e4e2"));
+    try t.expect(move_list.has("e4e1"));
+    try t.expect(move_list.has("e4d4"));
+    try t.expect(move_list.has("e4c4"));
+    try t.expect(move_list.has("e4b4"));
+    try t.expect(move_list.has("e4a4"));
+    try t.expect(move_list.has("e4f4"));
+    try t.expect(move_list.has("e4g4"));
+    try t.expect(move_list.has("e4h4"));
+}
+
+test "rook_2" {
+    var pos = Position.init(.White);
+    pos.put(.White, .Rook, "g2");
+
+    pos.put(.Black, .Knight, "g3");
+    pos.put(.White, .Pawn, "f2");
+
+    var move_list = MoveList{};
+    const n = generateRookMoves(.at("g2"), &pos, &move_list);
+
+    try t.expectEqual(3, n);
+    try t.expectEqual(3, move_list.len);
+
+    try t.expect(move_list.has("g2g3"));
+    try t.expect(move_list.has("g2h2"));
+    try t.expect(move_list.has("g2g1"));
+}
+
 pub fn run() void {
     const position = Position.start();
-    // position.print();
-    //
+    position.print();
+
     var move_list: MoveList = .{};
     generateMoves(&position, &move_list);
 
