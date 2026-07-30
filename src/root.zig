@@ -136,6 +136,13 @@ const MoveList = struct {
         self.moves[self.len] = .{ .from = from, .to = to };
         self.len += 1;
     }
+
+    fn has(self: *MoveList, str: []const u8) bool {
+        for (&self.moves) |*move| {
+            if (std.mem.eql(u8, &move.str(), str)) return true;
+        }
+        return false;
+    }
 };
 
 const Position = struct {
@@ -147,13 +154,21 @@ const Position = struct {
         return self.side_to_move.opp();
     }
 
-    fn empty() Position {
+    fn init(side_to_move: Color) Position {
         return .{
+            .side_to_move = side_to_move,
             .pieces = .{
                 @splat(0),
                 @splat(0),
             },
         };
+    }
+
+    fn put(self: *Position, color: Color, piece: Piece, addr: *const [2]u8) void {
+        const square = Square.at(addr);
+        assert(self.occupied() & square.idx == 0);
+
+        self.pieces[color.idx()][piece.idx()] |= square.mask();
     }
 
     fn start() Position {
@@ -258,6 +273,9 @@ fn generatePawnMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
         if (pos.side_to_move == .Black and square.rank() != 6) break :blk;
 
         // FIXME: check next block
+        const next = if (pos.side_to_move == .White) square.rel(0, 1) else square.rel(0, -1);
+        if (occupied & next.?.mask() != 0) break :blk;
+
         const target = if (pos.side_to_move == .White) square.rel(0, 2) else square.rel(0, -2);
 
         if (target != null and occupied & target.?.mask() == 0) {
@@ -269,15 +287,15 @@ fn generatePawnMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
     // capture left
     {
         const target = if (pos.side_to_move == .White) square.rel(-1, 1) else square.rel(1, -1);
-        if (target != null and occupied_enemy & target.?.mask() == 1) {
+        if (target != null and occupied_enemy & target.?.mask() != 0) {
             out.append(.get(square.idx), .get(target.?.idx));
             n += 1;
         }
     }
     // capture right
     {
-        const target = if (pos.side_to_move == .White) square.rel(-1, -1) else square.rel(1, 1);
-        if (target != null and occupied_enemy & target.?.mask() == 1) {
+        const target = if (pos.side_to_move == .White) square.rel(1, 1) else square.rel(-1, -1);
+        if (target != null and occupied_enemy & target.?.mask() != 0) {
             out.append(.get(square.idx), .get(target.?.idx));
             n += 1;
         }
@@ -300,6 +318,60 @@ test "pawn_moves" {
 
     try t.expectEqualStrings(&move_list.moves[0].str(), "e2e3");
     try t.expectEqualStrings(&move_list.moves[1].str(), "e2e4");
+}
+
+test "pawn_step_starting" {
+    var pos = Position.init(.White);
+    pos.put(.White, .Pawn, "e2");
+
+    var move_list = MoveList{};
+    const n = generatePawnMoves(.at("e2"), &pos, &move_list);
+
+    try t.expectEqual(n, 2);
+    try t.expectEqual(move_list.len, 2);
+
+    try t.expect(move_list.has("e2e3"));
+    try t.expect(move_list.has("e2e4"));
+}
+
+test "pawn_step_not_starting" {
+    var pos = Position.init(.White);
+    pos.put(.White, .Pawn, "e3");
+
+    var move_list = MoveList{};
+    const n = generatePawnMoves(.at("e3"), &pos, &move_list);
+
+    try t.expectEqual(n, 1);
+
+    try t.expect(move_list.has("e3e4"));
+}
+
+test "pawn_step_blocked" {
+    var pos = Position.init(.White);
+    pos.put(.White, .Pawn, "e2");
+    pos.put(.Black, .Pawn, "e3");
+
+    var move_list = MoveList{};
+    const n = generatePawnMoves(.at("e2"), &pos, &move_list);
+
+    try t.expectEqual(n, 0);
+}
+
+test "pawn_capture" {
+    var pos = Position.init(.White);
+    pos.put(.White, .Pawn, "e2");
+    pos.put(.Black, .Bishop, "d3");
+    pos.put(.Black, .Bishop, "f3");
+
+    var move_list = MoveList{};
+    const n = generatePawnMoves(.at("e2"), &pos, &move_list);
+
+    try t.expectEqual(4, n);
+
+    try t.expect(move_list.has("e2e3"));
+    try t.expect(move_list.has("e2e4"));
+    try t.expect(move_list.has("e2d3"));
+    try t.expect(move_list.has("e2f3"));
 }
 
 pub fn run() void {
