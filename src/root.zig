@@ -36,7 +36,7 @@ const Square = struct {
     }
 
     fn get(idx: u8) Square {
-        assert(idx > 0 and idx < 64);
+        assert(idx >= 0 and idx < 64);
         return .{ .idx = idx };
     }
 
@@ -275,13 +275,24 @@ const Position = struct {
     }
 };
 
-fn generateMoves(pos: *const Position, out: *MoveList) void {
-    var idx: u8 = 0;
-    while (idx < 64) : (idx += 1) {
-        if ((@as(u64, 1) << @intCast(idx)) & pos.pieces[pos.side_to_move.idx()][Piece.Pawn.idx()] != 0) {
-            _ = generatePawnMoves(.get(idx), pos, out);
-        }
+inline fn generateMovesForPiece(piece: Piece, op: *const fn (square: Square, pos: *const Position, out: *MoveList) u8, pos: *const Position, out: *MoveList) void {
+    var active = pos.pieces[pos.side_to_move.idx()][piece.idx()];
+
+    while (active != 0) {
+        const idx = @ctz(active);
+
+        _ = op(.get(idx), pos, out);
+        active &= active - 1;
     }
+}
+
+fn generateMoves(pos: *const Position, out: *MoveList) void {
+    generateMovesForPiece(.Pawn, &generatePawnMoves, pos, out);
+    generateMovesForPiece(.Knight, &generateKnightMoves, pos, out);
+    generateMovesForPiece(.Bishop, &generateBishopMoves, pos, out);
+    generateMovesForPiece(.Rook, &generateRookMoves, pos, out);
+    generateMovesForPiece(.Queen, &generateQueenMoves, pos, out);
+    generateMovesForPiece(.King, &generateKingMoves, pos, out);
 }
 
 fn generatePawnMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
@@ -726,6 +737,21 @@ test "king_2" {
     try t.expect(move_list.has("e1d2"));
     try t.expect(move_list.has("e1f1"));
     try t.expect(move_list.has("e1f2"));
+}
+
+test "starting_moves" {
+    var position = Position.start();
+
+    var move_list: MoveList = .{};
+
+    generateMoves(&position, &move_list);
+    try t.expectEqual(20, move_list.len);
+
+    position.side_to_move = .Black;
+    move_list = .{};
+
+    generateMoves(&position, &move_list);
+    try t.expectEqual(20, move_list.len);
 }
 
 pub fn run() void {
