@@ -160,6 +160,11 @@ const MoveList = struct {
         self.len += 1;
     }
 
+    fn append_move(self: *MoveList, move: Move) void {
+        self.moves[self.len] = move;
+        self.len += 1;
+    }
+
     fn has(self: *MoveList, str: []const u8, move_type: MoveType) bool {
         for (0..self.len) |i| {
             if (std.mem.eql(u8, &self.moves[i].str(), str)) {
@@ -170,7 +175,7 @@ const MoveList = struct {
         return false;
     }
 
-    fn print(self: *const MoveList) void {
+    fn draw(self: *const MoveList) void {
         var buf: [64]u8 = @splat(32);
 
         for (0..self.len) |i| {
@@ -188,6 +193,13 @@ const MoveList = struct {
             std.debug.print("\n", .{});
             std.debug.print("-" ** 33, .{});
             std.debug.print("\n", .{});
+        }
+    }
+
+    fn print(self: *const MoveList) void {
+        for (0..self.len) |i| {
+            const move = self.moves[i];
+            std.debug.print("{s}\n", .{move.str()});
         }
     }
 };
@@ -216,6 +228,28 @@ const Position = struct {
         assert(self.occupied() & square.mask() == 0);
 
         self.pieces[color.idx()][piece.idx()] |= square.mask();
+    }
+
+    fn apply(self: *Position, move: Move) void {
+        const from_mask = move.from.mask();
+        const to_mask = move.to.mask();
+
+        for (&self.pieces[self.side_to_move.idx()]) |*bitmask| {
+            if (bitmask.* & from_mask != 0) {
+                bitmask.* ^= from_mask;
+                bitmask.* |= to_mask;
+                break;
+            }
+        } else unreachable;
+
+        if (move.move_type == .CAPTURE) {
+            for (&self.pieces[self.side_enemy().idx()]) |*bitmask| {
+                if (bitmask.* & to_mask != 0) {
+                    bitmask.* ^= to_mask;
+                    break;
+                }
+            } else unreachable;
+        }
     }
 
     fn start() Position {
@@ -287,78 +321,33 @@ const Position = struct {
     }
 };
 
-fn generateMovesForPiece(piece: Piece, op: *const fn (square: Square, pos: *const Position, out: *MoveList) void, pos: *const Position, out: *MoveList) void {
-    var active = pos.pieces[pos.side_to_move.idx()][piece.idx()];
+test "position_apply" {
+    var pos = Position.start();
 
-    while (active != 0) {
-        const idx = @ctz(active);
+    const move = Move{ .from = .at("e2"), .to = .at("e4"), .move_type = .NORMAL };
 
-        op(.get(idx), pos, out);
-        active &= active - 1;
-    }
+    try t.expect(pos.pieces[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask() != 0);
+    try t.expectEqual(pos.pieces[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask(), 0);
+
+    pos.apply(move);
+
+    try t.expectEqual(pos.pieces[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask(), 0);
+    try t.expect(pos.pieces[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask() != 0);
 }
 
-fn generateMoves(pos: *const Position, out: *MoveList) void {
-    generateMovesForPiece(.Pawn, &generatePawnMoves, pos, out);
-    generateMovesForPiece(.Knight, &generateKnightMoves, pos, out);
-    generateMovesForPiece(.Bishop, &generateBishopMoves, pos, out);
-    generateMovesForPiece(.Rook, &generateRookMoves, pos, out);
-    generateMovesForPiece(.Queen, &generateQueenMoves, pos, out);
-    generateMovesForPiece(.King, &generateKingMoves, pos, out);
+fn getAttacksPawn(from: Square, side: Color, occupied: u64) u64 {
+    var result: u64 = 0;
+
+    const left = if (side == .White) from.rel(-1, 1) else from.rel(1, -1);
+    if (left != null and left.?.mask() & occupied != 0) result |= left.?.mask();
+
+    const right = if (side == .White) from.rel(1, 1) else from.rel(-1, -1);
+    if (right != null and right.?.mask() & occupied != 0) result |= right.?.mask();
+
+    return result;
 }
 
-fn generatePawnMoves(square: Square, pos: *const Position, out: *MoveList) void {
-    const occupied = pos.occupied();
-    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
-
-    // push single
-    {
-        const step: i8 = if (pos.side_to_move == .White) 1 else -1;
-        const target = square.rel(0, step);
-
-        if (target != null and occupied & target.?.mask() == 0) {
-            out.append(.get(square.idx), .get(target.?.idx), .NORMAL);
-        }
-    }
-
-    // push double
-    blk: {
-        if (pos.side_to_move == .White and square.rank() != 1) break :blk;
-        if (pos.side_to_move == .Black and square.rank() != 6) break :blk;
-
-        const next = if (pos.side_to_move == .White) square.rel(0, 1) else square.rel(0, -1);
-        if (occupied & next.?.mask() != 0) break :blk;
-
-        const target = if (pos.side_to_move == .White) square.rel(0, 2) else square.rel(0, -2);
-
-        if (target != null and occupied & target.?.mask() == 0) {
-            out.append(.get(square.idx), .get(target.?.idx), .NORMAL);
-        }
-    }
-
-    // capture left
-    {
-        const target = if (pos.side_to_move == .White) square.rel(-1, 1) else square.rel(1, -1);
-        if (target != null and occupied_enemy & target.?.mask() != 0) {
-            out.append(.get(square.idx), .get(target.?.idx), .CAPTURE);
-        }
-    }
-    // capture right
-    {
-        const target = if (pos.side_to_move == .White) square.rel(1, 1) else square.rel(-1, -1);
-        if (target != null and occupied_enemy & target.?.mask() != 0) {
-            out.append(.get(square.idx), .get(target.?.idx), .CAPTURE);
-        }
-    }
-
-    // TODO: promotions
-    // TODO: en passant
-}
-
-fn generateKnightMoves(square: Square, pos: *const Position, out: *MoveList) void {
-    const occupied = pos.occupied();
-    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
-
+fn getAttacksKnight(from: Square) u64 {
     const directions = [_]struct { x: i8, y: i8 }{
         .{ .x = -1, .y = 2 },
         .{ .x = 1, .y = 2 },
@@ -370,22 +359,17 @@ fn generateKnightMoves(square: Square, pos: *const Position, out: *MoveList) voi
         .{ .x = 2, .y = -1 },
     };
 
+    var result: u64 = 0;
+
     for (&directions) |dir| {
-        const target = square.rel(dir.x, dir.y);
-        if (target == null) continue;
-
-        if (target.?.mask() & occupied == 0) {
-            out.append(square, target.?, .NORMAL);
-        } else if (target.?.mask() & occupied_enemy != 0) {
-            out.append(square, target.?, .CAPTURE);
-        }
+        const target = from.rel(dir.x, dir.y);
+        if (target != null) result |= target.?.mask();
     }
+
+    return result;
 }
 
-fn generateBishopMoves(from: Square, pos: *const Position, out: *MoveList) void {
-    const occupied = pos.occupied();
-    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
-
+fn getAttacksBishop(from: Square, occupied: u64) u64 {
     const directions = [_]struct { x: i8, y: i8 }{
         .{ .x = -1, .y = 1 },
         .{ .x = 1, .y = 1 },
@@ -393,6 +377,8 @@ fn generateBishopMoves(from: Square, pos: *const Position, out: *MoveList) void 
         .{ .x = 1, .y = -1 },
     };
 
+    var result: u64 = 0;
+
     for (&directions) |*dir| {
         inner: for (1..8) |i| {
             const target = from.rel(@as(i8, @intCast(i)) * dir.x, @as(i8, @intCast(i)) * dir.y);
@@ -400,19 +386,15 @@ fn generateBishopMoves(from: Square, pos: *const Position, out: *MoveList) void 
                 break :inner;
             }
 
-            if (target.?.mask() & occupied == 0) {
-                out.append(from, target.?, .NORMAL);
-            } else {
-                if (target.?.mask() & occupied_enemy != 0) {
-                    out.append(from, target.?, .CAPTURE);
-                }
-                break :inner;
-            }
+            result |= target.?.mask();
+            if (occupied & target.?.mask() != 0) break :inner;
         }
     }
+
+    return result;
 }
 
-fn generateRookMoves(from: Square, pos: *const Position, out: *MoveList) void {
+fn getAttacksRook(from: Square, occupied: u64) u64 {
     const directions = [_]struct { x: i8, y: i8 }{
         .{ .x = 1, .y = 0 },
         .{ .x = -1, .y = 0 },
@@ -420,8 +402,7 @@ fn generateRookMoves(from: Square, pos: *const Position, out: *MoveList) void {
         .{ .x = 0, .y = -1 },
     };
 
-    const occupied = pos.occupied();
-    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
+    var result: u64 = 0;
 
     for (&directions) |*dir| {
         inner: for (1..8) |i| {
@@ -430,24 +411,20 @@ fn generateRookMoves(from: Square, pos: *const Position, out: *MoveList) void {
                 break :inner;
             }
 
-            if (target.?.mask() & occupied == 0) {
-                out.append(from, target.?, .NORMAL);
-            } else {
-                if (target.?.mask() & occupied_enemy != 0) {
-                    out.append(from, target.?, .CAPTURE);
-                }
-                break :inner;
-            }
+            result |= target.?.mask();
+
+            if (occupied & target.?.mask() != 0) break :inner;
         }
     }
+
+    return result;
 }
 
-fn generateQueenMoves(from: Square, pos: *const Position, out: *MoveList) void {
-    generateRookMoves(from, pos, out);
-    generateBishopMoves(from, pos, out);
+fn getAttacksQueen(from: Square, occupied: u64) u64 {
+    return getAttacksBishop(from, occupied) | getAttacksRook(from, occupied);
 }
 
-fn generateKingMoves(from: Square, pos: *const Position, out: *MoveList) void {
+fn getAttacksKing(from: Square) u64 {
     const directions = [_]struct { x: i8, y: i8 }{
         .{ .x = 1, .y = 0 },
         .{ .x = -1, .y = 0 },
@@ -459,20 +436,93 @@ fn generateKingMoves(from: Square, pos: *const Position, out: *MoveList) void {
         .{ .x = -1, .y = -1 },
     };
 
-    const occupied = pos.occupied();
-    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
+    var result: u64 = 0;
 
     for (&directions) |*dir| {
         const target = from.rel(dir.x, dir.y);
-        if (target == null) {
-            continue;
+        if (target != null) {
+            result |= target.?.mask();
         }
+    }
 
-        if (target.?.mask() & occupied == 0) {
-            out.append(from, target.?, .NORMAL);
-        } else if (target.?.mask() & occupied_enemy != 0) {
-            out.append(from, target.?, .CAPTURE);
-        }
+    return result;
+}
+
+fn getAttacks(piece: Piece, side: Color, from: Square, occupied: u64) u64 {
+    return switch (piece) {
+        Piece.Pawn => getAttacksPawn(from, side, occupied),
+        Piece.Knight => getAttacksKnight(from),
+        Piece.Bishop => getAttacksBishop(from, occupied),
+        Piece.Rook => getAttacksRook(from, occupied),
+        Piece.Queen => getAttacksQueen(from, occupied),
+        Piece.King => getAttacksKing(from),
+    };
+}
+
+fn getPawnPushes(square: Square, side: Color, occupied: u64) u64 {
+    var result: u64 = 0;
+
+    // push single
+    var target = if (side == .White) square.rel(0, 1) else square.rel(0, -1);
+    if (target == null or occupied & target.?.mask() != 0) return result;
+
+    result |= target.?.mask();
+
+    // push double
+    if (side == .White and square.rank() != 1) return result;
+    if (side == .Black and square.rank() != 6) return result;
+
+    target = if (side == .White) square.rel(0, 2) else square.rel(0, -2);
+
+    if (target != null and occupied & target.?.mask() == 0) {
+        result |= target.?.mask();
+    }
+
+    return result;
+}
+
+fn getMoveSquares(piece: Piece, from: Square, pos: *const Position, occupied: u64) u64 {
+    var squares = getAttacks(piece, pos.side_to_move, from, occupied);
+
+    if (piece == .Pawn) {
+        squares |= getPawnPushes(from, pos.side_to_move, occupied);
+
+        // TODO: promotions
+        // TODO: en passant
+    }
+
+    return squares;
+}
+
+fn findMovesFrom(
+    piece: Piece,
+    from: Square,
+    pos: *const Position,
+    out: *MoveList,
+) void {
+    const occupied = pos.occupied();
+    const occupied_self = pos.occupiedBy(pos.side_to_move);
+    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
+
+    var squares = getMoveSquares(piece, from, pos, occupied);
+
+    while (squares != 0) : (squares &= squares - 1) {
+        const idx = @ctz(squares);
+
+        const target = Square.get(idx);
+        const mask = target.mask();
+
+        if (mask & occupied_self != 0) continue;
+
+        var move_type: MoveType = undefined;
+        move_type = if (mask & occupied_enemy == 0) .NORMAL else .CAPTURE;
+
+        const move = Move{ .from = from, .to = target, .move_type = move_type };
+
+        var pos_copy = pos.*;
+        pos_copy.apply(move);
+
+        if (!isInCheck(&pos_copy, pos_copy.side_to_move)) out.append_move(move);
     }
 }
 
@@ -482,7 +532,7 @@ test "pawn_moves" {
 
     var move_list: MoveList = .{};
 
-    generatePawnMoves(square, &pos, &move_list);
+    findMovesFrom(.Pawn, square, &pos, &move_list);
     try t.expectEqual(2, move_list.len);
 
     try t.expectEqualStrings(&move_list.moves[0].str(), "e2e3");
@@ -494,7 +544,7 @@ test "pawn_step_starting" {
     pos.put(.White, .Pawn, "e2");
 
     var move_list = MoveList{};
-    generatePawnMoves(.at("e2"), &pos, &move_list);
+    findMovesFrom(.Pawn, .at("e2"), &pos, &move_list);
 
     try t.expectEqual(2, move_list.len);
 
@@ -507,7 +557,7 @@ test "pawn_step_not_starting" {
     pos.put(.White, .Pawn, "e3");
 
     var move_list = MoveList{};
-    generatePawnMoves(.at("e3"), &pos, &move_list);
+    findMovesFrom(.Pawn, .at("e3"), &pos, &move_list);
 
     try t.expectEqual(1, move_list.len);
 
@@ -520,7 +570,7 @@ test "pawn_step_blocked" {
     pos.put(.Black, .Pawn, "e3");
 
     var move_list = MoveList{};
-    generatePawnMoves(.at("e2"), &pos, &move_list);
+    findMovesFrom(.Pawn, .at("e2"), &pos, &move_list);
 
     try t.expectEqual(0, move_list.len);
 }
@@ -532,7 +582,7 @@ test "pawn_capture" {
     pos.put(.Black, .Bishop, "f3");
 
     var move_list = MoveList{};
-    generatePawnMoves(.at("e2"), &pos, &move_list);
+    findMovesFrom(.Pawn, .at("e2"), &pos, &move_list);
 
     try t.expectEqual(4, move_list.len);
 
@@ -550,7 +600,7 @@ test "pawn_capture_2" {
     pos.put(.White, .Queen, "c4");
 
     var move_list = MoveList{};
-    generatePawnMoves(.at("d5"), &pos, &move_list);
+    findMovesFrom(.Pawn, .at("d5"), &pos, &move_list);
 
     try t.expectEqual(1, move_list.len);
 
@@ -562,7 +612,7 @@ test "knight" {
     pos.put(.White, .Knight, "e4");
 
     var move_list = MoveList{};
-    generateKnightMoves(.at("e4"), &pos, &move_list);
+    findMovesFrom(.Knight, .at("e4"), &pos, &move_list);
 
     try t.expectEqual(8, move_list.len);
 
@@ -586,7 +636,7 @@ test "knight_2" {
     pos.put(.Black, .Bishop, "f6");
 
     var move_list = MoveList{};
-    generateKnightMoves(.at("g4"), &pos, &move_list);
+    findMovesFrom(.Knight, .at("g4"), &pos, &move_list);
 
     try t.expectEqual(4, move_list.len);
 
@@ -601,7 +651,7 @@ test "bishop" {
     pos.put(.White, .Bishop, "e4");
 
     var move_list = MoveList{};
-    generateBishopMoves(.at("e4"), &pos, &move_list);
+    findMovesFrom(.Bishop, .at("e4"), &pos, &move_list);
 
     try t.expectEqual(13, move_list.len);
 
@@ -628,7 +678,7 @@ test "bishop_2" {
     pos.put(.White, .Rook, "h1");
 
     var move_list = MoveList{};
-    generateBishopMoves(.at("g2"), &pos, &move_list);
+    findMovesFrom(.Bishop, .at("g2"), &pos, &move_list);
 
     try t.expectEqual(3, move_list.len);
 
@@ -642,7 +692,7 @@ test "rook" {
     pos.put(.White, .Rook, "e4");
 
     var move_list = MoveList{};
-    generateRookMoves(.at("e4"), &pos, &move_list);
+    findMovesFrom(.Rook, .at("e4"), &pos, &move_list);
 
     try t.expectEqual(14, move_list.len);
 
@@ -670,7 +720,7 @@ test "rook_2" {
     pos.put(.White, .Pawn, "f2");
 
     var move_list = MoveList{};
-    generateRookMoves(.at("g2"), &pos, &move_list);
+    findMovesFrom(.Rook, .at("g2"), &pos, &move_list);
 
     try t.expectEqual(3, move_list.len);
 
@@ -689,7 +739,7 @@ test "queen" {
     pos.put(.White, .King, "e1");
 
     var move_list = MoveList{};
-    generateQueenMoves(.at("d1"), &pos, &move_list);
+    findMovesFrom(.Queen, .at("d1"), &pos, &move_list);
 
     try t.expectEqual(6, move_list.len);
 }
@@ -699,7 +749,7 @@ test "king" {
     pos.put(.White, .King, "e4");
 
     var move_list = MoveList{};
-    generateKingMoves(.at("e4"), &pos, &move_list);
+    findMovesFrom(.King, .at("e4"), &pos, &move_list);
 
     try t.expectEqual(8, move_list.len);
 
@@ -723,7 +773,7 @@ test "king_2" {
     pos.put(.Black, .Pawn, "d2");
 
     var move_list = MoveList{};
-    generateKingMoves(.at("e1"), &pos, &move_list);
+    findMovesFrom(.King, .at("e1"), &pos, &move_list);
 
     try t.expectEqual(3, move_list.len);
 
@@ -732,19 +782,162 @@ test "king_2" {
     try t.expect(move_list.has("e1d2", .CAPTURE));
 }
 
+fn findAllMoves(pos: *const Position, out: *MoveList) void {
+    for (std.enums.values(Piece)) |piece| {
+        var placements = pos.pieces[pos.side_to_move.idx()][piece.idx()];
+
+        while (placements != 0) {
+            const idx = @ctz(placements);
+
+            findMovesFrom(piece, .get(idx), pos, out);
+            placements &= placements - 1;
+        }
+    }
+}
+
 test "starting_moves" {
     var position = Position.start();
 
     var move_list: MoveList = .{};
 
-    generateMoves(&position, &move_list);
+    findAllMoves(&position, &move_list);
     try t.expectEqual(20, move_list.len);
 
     position.side_to_move = .Black;
     move_list = .{};
 
-    generateMoves(&position, &move_list);
+    findAllMoves(&position, &move_list);
     try t.expectEqual(20, move_list.len);
+}
+
+fn isAttackedBy(area_mask: u64, piece: Piece, attacker: Color, pos: *const Position, occupied: u64) bool {
+    var pieces = pos.pieces[attacker.idx()][piece.idx()];
+    while (pieces != 0) : (pieces &= pieces - 1) {
+        const idx = @ctz(pieces);
+        const attacks = getAttacks(piece, attacker, .get(idx), occupied);
+        if (attacks & area_mask != 0) return true;
+    }
+
+    return false;
+}
+
+// is any square in the area mask attacked by any piece of the attacker side
+fn isAttacked(area: u64, attacker: Color, pos: *const Position) bool {
+    const occupied = pos.occupied();
+
+    inline for (std.enums.values(Piece)) |piece| {
+        if (isAttackedBy(area, piece, attacker, pos, occupied)) return true;
+    }
+
+    return false;
+}
+
+fn isInCheck(pos: *const Position, side: Color) bool {
+    const king_mask = pos.pieces[side.idx()][Piece.King.idx()];
+
+    return isAttacked(king_mask, side.opp(), pos);
+}
+
+test "is_check_no" {
+    const pos = Position.start();
+
+    try t.expect(!isInCheck(&pos, .White));
+    try t.expect(!isInCheck(&pos, .Black));
+}
+
+test "is_check_pawn" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, "d1");
+    pos.put(.Black, .Pawn, "c2");
+
+    try t.expect(isInCheck(&pos, .White));
+
+    pos = Position.init(.Black);
+    pos.put(.Black, .King, "e8");
+    pos.put(.White, .Pawn, "d7");
+
+    try t.expect(isInCheck(&pos, .Black));
+}
+
+test "is_check_knight" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, "d1");
+    pos.put(.Black, .Knight, "e3");
+
+    try t.expect(isInCheck(&pos, .White));
+
+    pos = Position.init(.Black);
+    pos.put(.Black, .King, "h8");
+    pos.put(.White, .Knight, "g6");
+
+    try t.expect(isInCheck(&pos, .Black));
+}
+
+test "is_check_bishop" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, "d1");
+    pos.put(.Black, .Bishop, "a4");
+
+    try t.expect(isInCheck(&pos, .White));
+
+    pos = Position.init(.Black);
+    pos.put(.Black, .King, "h8");
+    pos.put(.White, .Bishop, "a1");
+
+    try t.expect(isInCheck(&pos, .Black));
+}
+
+test "is_check_rook" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, "d1");
+    pos.put(.Black, .Rook, "d8");
+
+    try t.expect(isInCheck(&pos, .White));
+
+    pos = Position.init(.Black);
+    pos.put(.Black, .King, "h8");
+    pos.put(.White, .Rook, "h1");
+
+    try t.expect(isInCheck(&pos, .Black));
+}
+
+test "is_check_queen" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, "d1");
+    pos.put(.Black, .Queen, "a4");
+
+    try t.expect(isInCheck(&pos, .White));
+
+    pos = Position.init(.Black);
+    pos.put(.Black, .King, "h8");
+    pos.put(.White, .Queen, "h1");
+
+    try t.expect(isInCheck(&pos, .Black));
+}
+
+test "is_check_king" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, "e4");
+    pos.put(.Black, .King, "d4");
+
+    try t.expect(isInCheck(&pos, .White));
+    try t.expect(isInCheck(&pos, .Black));
+}
+
+test "skips_moves_exposing_king" {
+    var position = Position.start();
+
+    position.put(.Black, .Bishop, "b4");
+
+    var move_list: MoveList = .{};
+
+    findAllMoves(&position, &move_list);
+
+    try t.expectEqual(17, move_list.len);
+
+    try t.expect(!move_list.has("d2d3", .NORMAL));
+    try t.expect(!move_list.has("d2d4", .NORMAL));
+    try t.expect(!move_list.has("b2b4", .NORMAL));
 }
 
 pub fn run() void {
@@ -752,11 +945,28 @@ pub fn run() void {
     position.print();
 
     var move_list: MoveList = .{};
-    generateMoves(&position, &move_list);
+    findAllMoves(&position, &move_list);
 
     std.debug.print("moves: {}\n", .{move_list.len});
 
     for (0..move_list.len) |i| {
         std.debug.print("{s}\n", .{move_list.moves[i].str()});
+    }
+}
+
+fn print_bitmask(bitmask: u64) void {
+    std.debug.print("-" ** 33, .{});
+    std.debug.print("\n", .{});
+    for (0..8) |r| {
+        std.debug.print("|", .{});
+        for (0..8) |f| {
+            const idx = (7 - r) * 8 + f;
+            const mask = @as(u64, 1) << @intCast(idx);
+            const c: u8 = if (bitmask & mask == 0) ' ' else 'X';
+            std.debug.print(" {c} |", .{c});
+        }
+        std.debug.print("\n", .{});
+        std.debug.print("-" ** 33, .{});
+        std.debug.print("\n", .{});
     }
 }
