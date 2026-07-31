@@ -128,9 +128,18 @@ const Piece = enum(u3) {
     }
 };
 
+const MoveType = enum {
+    NORMAL,
+    CAPTURE,
+    CASTLE,
+    PROMOTION,
+    EN_PASSANT,
+};
+
 const Move = struct {
     from: Square,
     to: Square,
+    move_type: MoveType = .NORMAL,
 
     fn str(self: Move) [4]u8 {
         return [4]u8{
@@ -146,14 +155,17 @@ const MoveList = struct {
     moves: [255]Move = undefined,
     len: u8 = 0,
 
-    fn append(self: *MoveList, from: Square, to: Square) void {
-        self.moves[self.len] = .{ .from = from, .to = to };
+    fn append(self: *MoveList, from: Square, to: Square, move_type: MoveType) void {
+        self.moves[self.len] = .{ .from = from, .to = to, .move_type = move_type };
         self.len += 1;
     }
 
-    fn has(self: *MoveList, str: []const u8) bool {
-        for (&self.moves) |*move| {
-            if (std.mem.eql(u8, &move.str(), str)) return true;
+    fn has(self: *MoveList, str: []const u8, move_type: MoveType) bool {
+        for (0..self.len) |i| {
+            if (std.mem.eql(u8, &self.moves[i].str(), str)) {
+                assert(self.moves[i].move_type == move_type);
+                return true;
+            }
         }
         return false;
     }
@@ -275,13 +287,13 @@ const Position = struct {
     }
 };
 
-inline fn generateMovesForPiece(piece: Piece, op: *const fn (square: Square, pos: *const Position, out: *MoveList) u8, pos: *const Position, out: *MoveList) void {
+fn generateMovesForPiece(piece: Piece, op: *const fn (square: Square, pos: *const Position, out: *MoveList) void, pos: *const Position, out: *MoveList) void {
     var active = pos.pieces[pos.side_to_move.idx()][piece.idx()];
 
     while (active != 0) {
         const idx = @ctz(active);
 
-        _ = op(.get(idx), pos, out);
+        op(.get(idx), pos, out);
         active &= active - 1;
     }
 }
@@ -295,24 +307,21 @@ fn generateMoves(pos: *const Position, out: *MoveList) void {
     generateMovesForPiece(.King, &generateKingMoves, pos, out);
 }
 
-fn generatePawnMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
-    var n: u8 = 0;
-
+fn generatePawnMoves(square: Square, pos: *const Position, out: *MoveList) void {
     const occupied = pos.occupied();
     const occupied_enemy = pos.occupiedBy(pos.side_enemy());
 
-    // step one
+    // push single
     {
         const step: i8 = if (pos.side_to_move == .White) 1 else -1;
         const target = square.rel(0, step);
 
         if (target != null and occupied & target.?.mask() == 0) {
-            out.append(.get(square.idx), .get(target.?.idx));
-            n += 1;
+            out.append(.get(square.idx), .get(target.?.idx), .NORMAL);
         }
     }
 
-    // step two
+    // push double
     blk: {
         if (pos.side_to_move == .White and square.rank() != 1) break :blk;
         if (pos.side_to_move == .Black and square.rank() != 6) break :blk;
@@ -323,8 +332,7 @@ fn generatePawnMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
         const target = if (pos.side_to_move == .White) square.rel(0, 2) else square.rel(0, -2);
 
         if (target != null and occupied & target.?.mask() == 0) {
-            out.append(.get(square.idx), .get(target.?.idx));
-            n += 1;
+            out.append(.get(square.idx), .get(target.?.idx), .NORMAL);
         }
     }
 
@@ -332,26 +340,22 @@ fn generatePawnMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
     {
         const target = if (pos.side_to_move == .White) square.rel(-1, 1) else square.rel(1, -1);
         if (target != null and occupied_enemy & target.?.mask() != 0) {
-            out.append(.get(square.idx), .get(target.?.idx));
-            n += 1;
+            out.append(.get(square.idx), .get(target.?.idx), .CAPTURE);
         }
     }
     // capture right
     {
         const target = if (pos.side_to_move == .White) square.rel(1, 1) else square.rel(-1, -1);
         if (target != null and occupied_enemy & target.?.mask() != 0) {
-            out.append(.get(square.idx), .get(target.?.idx));
-            n += 1;
+            out.append(.get(square.idx), .get(target.?.idx), .CAPTURE);
         }
     }
 
     // TODO: promotions
-
-    return n;
+    // TODO: en passant
 }
 
-fn generateKnightMoves(square: Square, pos: *const Position, out: *MoveList) u8 {
-    var n: u8 = 0;
+fn generateKnightMoves(square: Square, pos: *const Position, out: *MoveList) void {
     const occupied = pos.occupied();
     const occupied_enemy = pos.occupiedBy(pos.side_enemy());
 
@@ -370,18 +374,15 @@ fn generateKnightMoves(square: Square, pos: *const Position, out: *MoveList) u8 
         const target = square.rel(dir.x, dir.y);
         if (target == null) continue;
 
-        if (target.?.mask() & occupied == 0 or target.?.mask() & occupied_enemy != 0) {
-            out.append(square, target.?);
-            n += 1;
+        if (target.?.mask() & occupied == 0) {
+            out.append(square, target.?, .NORMAL);
+        } else if (target.?.mask() & occupied_enemy != 0) {
+            out.append(square, target.?, .CAPTURE);
         }
     }
-
-    return n;
 }
 
-fn generateBishopMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
-    var n: u8 = 0;
-
+fn generateBishopMoves(from: Square, pos: *const Position, out: *MoveList) void {
     const occupied = pos.occupied();
     const occupied_enemy = pos.occupiedBy(pos.side_enemy());
 
@@ -400,24 +401,18 @@ fn generateBishopMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
             }
 
             if (target.?.mask() & occupied == 0) {
-                out.append(from, target.?);
-                n += 1;
+                out.append(from, target.?, .NORMAL);
             } else {
                 if (target.?.mask() & occupied_enemy != 0) {
-                    out.append(from, target.?);
-                    n += 1;
+                    out.append(from, target.?, .CAPTURE);
                 }
                 break :inner;
             }
         }
     }
-
-    return n;
 }
 
-fn generateRookMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
-    var n: u8 = 0;
-
+fn generateRookMoves(from: Square, pos: *const Position, out: *MoveList) void {
     const directions = [_]struct { x: i8, y: i8 }{
         .{ .x = 1, .y = 0 },
         .{ .x = -1, .y = 0 },
@@ -436,28 +431,23 @@ fn generateRookMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
             }
 
             if (target.?.mask() & occupied == 0) {
-                out.append(from, target.?);
-                n += 1;
+                out.append(from, target.?, .NORMAL);
             } else {
                 if (target.?.mask() & occupied_enemy != 0) {
-                    out.append(from, target.?);
-                    n += 1;
+                    out.append(from, target.?, .CAPTURE);
                 }
                 break :inner;
             }
         }
     }
-
-    return n;
 }
 
-fn generateQueenMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
-    return generateRookMoves(from, pos, out) + generateBishopMoves(from, pos, out);
+fn generateQueenMoves(from: Square, pos: *const Position, out: *MoveList) void {
+    generateRookMoves(from, pos, out);
+    generateBishopMoves(from, pos, out);
 }
 
-fn generateKingMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
-    var n: u8 = 0;
-
+fn generateKingMoves(from: Square, pos: *const Position, out: *MoveList) void {
     const directions = [_]struct { x: i8, y: i8 }{
         .{ .x = 1, .y = 0 },
         .{ .x = -1, .y = 0 },
@@ -478,13 +468,12 @@ fn generateKingMoves(from: Square, pos: *const Position, out: *MoveList) u8 {
             continue;
         }
 
-        if (target.?.mask() & occupied == 0 or target.?.mask() & occupied_enemy != 0) {
-            out.append(from, target.?);
-            n += 1;
+        if (target.?.mask() & occupied == 0) {
+            out.append(from, target.?, .NORMAL);
+        } else if (target.?.mask() & occupied_enemy != 0) {
+            out.append(from, target.?, .CAPTURE);
         }
     }
-
-    return n;
 }
 
 test "pawn_moves" {
@@ -493,8 +482,7 @@ test "pawn_moves" {
 
     var move_list: MoveList = .{};
 
-    const n = generatePawnMoves(square, &pos, &move_list);
-    try t.expectEqual(2, n);
+    generatePawnMoves(square, &pos, &move_list);
     try t.expectEqual(2, move_list.len);
 
     try t.expectEqualStrings(&move_list.moves[0].str(), "e2e3");
@@ -506,13 +494,12 @@ test "pawn_step_starting" {
     pos.put(.White, .Pawn, "e2");
 
     var move_list = MoveList{};
-    const n = generatePawnMoves(.at("e2"), &pos, &move_list);
+    generatePawnMoves(.at("e2"), &pos, &move_list);
 
-    try t.expectEqual(2, n);
     try t.expectEqual(2, move_list.len);
 
-    try t.expect(move_list.has("e2e3"));
-    try t.expect(move_list.has("e2e4"));
+    try t.expect(move_list.has("e2e3", .NORMAL));
+    try t.expect(move_list.has("e2e4", .NORMAL));
 }
 
 test "pawn_step_not_starting" {
@@ -520,11 +507,11 @@ test "pawn_step_not_starting" {
     pos.put(.White, .Pawn, "e3");
 
     var move_list = MoveList{};
-    const n = generatePawnMoves(.at("e3"), &pos, &move_list);
+    generatePawnMoves(.at("e3"), &pos, &move_list);
 
-    try t.expectEqual(1, n);
+    try t.expectEqual(1, move_list.len);
 
-    try t.expect(move_list.has("e3e4"));
+    try t.expect(move_list.has("e3e4", .NORMAL));
 }
 
 test "pawn_step_blocked" {
@@ -533,9 +520,9 @@ test "pawn_step_blocked" {
     pos.put(.Black, .Pawn, "e3");
 
     var move_list = MoveList{};
-    const n = generatePawnMoves(.at("e2"), &pos, &move_list);
+    generatePawnMoves(.at("e2"), &pos, &move_list);
 
-    try t.expectEqual(0, n);
+    try t.expectEqual(0, move_list.len);
 }
 
 test "pawn_capture" {
@@ -545,14 +532,29 @@ test "pawn_capture" {
     pos.put(.Black, .Bishop, "f3");
 
     var move_list = MoveList{};
-    const n = generatePawnMoves(.at("e2"), &pos, &move_list);
+    generatePawnMoves(.at("e2"), &pos, &move_list);
 
-    try t.expectEqual(4, n);
+    try t.expectEqual(4, move_list.len);
 
-    try t.expect(move_list.has("e2e3"));
-    try t.expect(move_list.has("e2e4"));
-    try t.expect(move_list.has("e2d3"));
-    try t.expect(move_list.has("e2f3"));
+    try t.expect(move_list.has("e2e3", .NORMAL));
+    try t.expect(move_list.has("e2e4", .NORMAL));
+    try t.expect(move_list.has("e2d3", .CAPTURE));
+    try t.expect(move_list.has("e2f3", .CAPTURE));
+}
+
+test "pawn_capture_2" {
+    var pos = Position.init(.Black);
+    pos.put(.Black, .Pawn, "d5");
+    pos.put(.Black, .Bishop, "d4");
+    pos.put(.White, .Bishop, "c6");
+    pos.put(.White, .Queen, "c4");
+
+    var move_list = MoveList{};
+    generatePawnMoves(.at("d5"), &pos, &move_list);
+
+    try t.expectEqual(1, move_list.len);
+
+    try t.expect(move_list.has("d5c4", .CAPTURE));
 }
 
 test "knight" {
@@ -560,21 +562,20 @@ test "knight" {
     pos.put(.White, .Knight, "e4");
 
     var move_list = MoveList{};
-    const n = generateKnightMoves(.at("e4"), &pos, &move_list);
+    generateKnightMoves(.at("e4"), &pos, &move_list);
 
-    try t.expectEqual(8, n);
     try t.expectEqual(8, move_list.len);
 
-    try t.expect(move_list.has("e4d6"));
-    try t.expect(move_list.has("e4f6"));
-    try t.expect(move_list.has("e4c5"));
-    try t.expect(move_list.has("e4g5"));
-    try t.expect(move_list.has("e4c5"));
-    try t.expect(move_list.has("e4g5"));
-    try t.expect(move_list.has("e4c3"));
-    try t.expect(move_list.has("e4g3"));
-    try t.expect(move_list.has("e4d2"));
-    try t.expect(move_list.has("e4f2"));
+    try t.expect(move_list.has("e4d6", .NORMAL));
+    try t.expect(move_list.has("e4f6", .NORMAL));
+    try t.expect(move_list.has("e4c5", .NORMAL));
+    try t.expect(move_list.has("e4g5", .NORMAL));
+    try t.expect(move_list.has("e4c5", .NORMAL));
+    try t.expect(move_list.has("e4g5", .NORMAL));
+    try t.expect(move_list.has("e4c3", .NORMAL));
+    try t.expect(move_list.has("e4g3", .NORMAL));
+    try t.expect(move_list.has("e4d2", .NORMAL));
+    try t.expect(move_list.has("e4f2", .NORMAL));
 }
 
 test "knight_2" {
@@ -585,15 +586,14 @@ test "knight_2" {
     pos.put(.Black, .Bishop, "f6");
 
     var move_list = MoveList{};
-    const n = generateKnightMoves(.at("g4"), &pos, &move_list);
+    generateKnightMoves(.at("g4"), &pos, &move_list);
 
-    try t.expectEqual(4, n);
     try t.expectEqual(4, move_list.len);
 
-    try t.expect(move_list.has("g4f6"));
-    try t.expect(move_list.has("g4h6"));
-    try t.expect(move_list.has("g4e5"));
-    try t.expect(move_list.has("g4e3"));
+    try t.expect(move_list.has("g4f6", .CAPTURE));
+    try t.expect(move_list.has("g4h6", .NORMAL));
+    try t.expect(move_list.has("g4e5", .NORMAL));
+    try t.expect(move_list.has("g4e3", .NORMAL));
 }
 
 test "bishop" {
@@ -601,24 +601,23 @@ test "bishop" {
     pos.put(.White, .Bishop, "e4");
 
     var move_list = MoveList{};
-    const n = generateBishopMoves(.at("e4"), &pos, &move_list);
+    generateBishopMoves(.at("e4"), &pos, &move_list);
 
-    try t.expectEqual(13, n);
     try t.expectEqual(13, move_list.len);
 
-    try t.expect(move_list.has("e4f5"));
-    try t.expect(move_list.has("e4g6"));
-    try t.expect(move_list.has("e4h7"));
-    try t.expect(move_list.has("e4f3"));
-    try t.expect(move_list.has("e4g2"));
-    try t.expect(move_list.has("e4h1"));
-    try t.expect(move_list.has("e4d5"));
-    try t.expect(move_list.has("e4c6"));
-    try t.expect(move_list.has("e4b7"));
-    try t.expect(move_list.has("e4a8"));
-    try t.expect(move_list.has("e4d3"));
-    try t.expect(move_list.has("e4c2"));
-    try t.expect(move_list.has("e4b1"));
+    try t.expect(move_list.has("e4f5", .NORMAL));
+    try t.expect(move_list.has("e4g6", .NORMAL));
+    try t.expect(move_list.has("e4h7", .NORMAL));
+    try t.expect(move_list.has("e4f3", .NORMAL));
+    try t.expect(move_list.has("e4g2", .NORMAL));
+    try t.expect(move_list.has("e4h1", .NORMAL));
+    try t.expect(move_list.has("e4d5", .NORMAL));
+    try t.expect(move_list.has("e4c6", .NORMAL));
+    try t.expect(move_list.has("e4b7", .NORMAL));
+    try t.expect(move_list.has("e4a8", .NORMAL));
+    try t.expect(move_list.has("e4d3", .NORMAL));
+    try t.expect(move_list.has("e4c2", .NORMAL));
+    try t.expect(move_list.has("e4b1", .NORMAL));
 }
 
 test "bishop_2" {
@@ -629,14 +628,13 @@ test "bishop_2" {
     pos.put(.White, .Rook, "h1");
 
     var move_list = MoveList{};
-    const n = generateBishopMoves(.at("g2"), &pos, &move_list);
+    generateBishopMoves(.at("g2"), &pos, &move_list);
 
-    try t.expectEqual(3, n);
     try t.expectEqual(3, move_list.len);
 
-    try t.expect(move_list.has("g2h3"));
-    try t.expect(move_list.has("g2f1"));
-    try t.expect(move_list.has("g2f3"));
+    try t.expect(move_list.has("g2h3", .NORMAL));
+    try t.expect(move_list.has("g2f1", .NORMAL));
+    try t.expect(move_list.has("g2f3", .CAPTURE));
 }
 
 test "rook" {
@@ -644,25 +642,24 @@ test "rook" {
     pos.put(.White, .Rook, "e4");
 
     var move_list = MoveList{};
-    const n = generateRookMoves(.at("e4"), &pos, &move_list);
+    generateRookMoves(.at("e4"), &pos, &move_list);
 
-    try t.expectEqual(14, n);
     try t.expectEqual(14, move_list.len);
 
-    try t.expect(move_list.has("e4e5"));
-    try t.expect(move_list.has("e4e6"));
-    try t.expect(move_list.has("e4e7"));
-    try t.expect(move_list.has("e4e8"));
-    try t.expect(move_list.has("e4e3"));
-    try t.expect(move_list.has("e4e2"));
-    try t.expect(move_list.has("e4e1"));
-    try t.expect(move_list.has("e4d4"));
-    try t.expect(move_list.has("e4c4"));
-    try t.expect(move_list.has("e4b4"));
-    try t.expect(move_list.has("e4a4"));
-    try t.expect(move_list.has("e4f4"));
-    try t.expect(move_list.has("e4g4"));
-    try t.expect(move_list.has("e4h4"));
+    try t.expect(move_list.has("e4e5", .NORMAL));
+    try t.expect(move_list.has("e4e6", .NORMAL));
+    try t.expect(move_list.has("e4e7", .NORMAL));
+    try t.expect(move_list.has("e4e8", .NORMAL));
+    try t.expect(move_list.has("e4e3", .NORMAL));
+    try t.expect(move_list.has("e4e2", .NORMAL));
+    try t.expect(move_list.has("e4e1", .NORMAL));
+    try t.expect(move_list.has("e4d4", .NORMAL));
+    try t.expect(move_list.has("e4c4", .NORMAL));
+    try t.expect(move_list.has("e4b4", .NORMAL));
+    try t.expect(move_list.has("e4a4", .NORMAL));
+    try t.expect(move_list.has("e4f4", .NORMAL));
+    try t.expect(move_list.has("e4g4", .NORMAL));
+    try t.expect(move_list.has("e4h4", .NORMAL));
 }
 
 test "rook_2" {
@@ -673,14 +670,13 @@ test "rook_2" {
     pos.put(.White, .Pawn, "f2");
 
     var move_list = MoveList{};
-    const n = generateRookMoves(.at("g2"), &pos, &move_list);
+    generateRookMoves(.at("g2"), &pos, &move_list);
 
-    try t.expectEqual(3, n);
     try t.expectEqual(3, move_list.len);
 
-    try t.expect(move_list.has("g2g3"));
-    try t.expect(move_list.has("g2h2"));
-    try t.expect(move_list.has("g2g1"));
+    try t.expect(move_list.has("g2g3", .CAPTURE));
+    try t.expect(move_list.has("g2h2", .NORMAL));
+    try t.expect(move_list.has("g2g1", .NORMAL));
 }
 
 test "queen" {
@@ -693,9 +689,8 @@ test "queen" {
     pos.put(.White, .King, "e1");
 
     var move_list = MoveList{};
-    const n = generateQueenMoves(.at("d1"), &pos, &move_list);
+    generateQueenMoves(.at("d1"), &pos, &move_list);
 
-    try t.expectEqual(6, n);
     try t.expectEqual(6, move_list.len);
 }
 
@@ -704,19 +699,18 @@ test "king" {
     pos.put(.White, .King, "e4");
 
     var move_list = MoveList{};
-    const n = generateKingMoves(.at("e4"), &pos, &move_list);
+    generateKingMoves(.at("e4"), &pos, &move_list);
 
-    try t.expectEqual(8, n);
     try t.expectEqual(8, move_list.len);
 
-    try t.expect(move_list.has("e4e5"));
-    try t.expect(move_list.has("e4d5"));
-    try t.expect(move_list.has("e4f5"));
-    try t.expect(move_list.has("e4d4"));
-    try t.expect(move_list.has("e4f4"));
-    try t.expect(move_list.has("e4d3"));
-    try t.expect(move_list.has("e4e3"));
-    try t.expect(move_list.has("e4f3"));
+    try t.expect(move_list.has("e4e5", .NORMAL));
+    try t.expect(move_list.has("e4d5", .NORMAL));
+    try t.expect(move_list.has("e4f5", .NORMAL));
+    try t.expect(move_list.has("e4d4", .NORMAL));
+    try t.expect(move_list.has("e4f4", .NORMAL));
+    try t.expect(move_list.has("e4d3", .NORMAL));
+    try t.expect(move_list.has("e4e3", .NORMAL));
+    try t.expect(move_list.has("e4f3", .NORMAL));
 }
 
 test "king_2" {
@@ -729,14 +723,13 @@ test "king_2" {
     pos.put(.Black, .Pawn, "d2");
 
     var move_list = MoveList{};
-    const n = generateKingMoves(.at("e1"), &pos, &move_list);
+    generateKingMoves(.at("e1"), &pos, &move_list);
 
-    try t.expectEqual(3, n);
     try t.expectEqual(3, move_list.len);
 
-    try t.expect(move_list.has("e1d2"));
-    try t.expect(move_list.has("e1f1"));
-    try t.expect(move_list.has("e1f2"));
+    try t.expect(move_list.has("e1f1", .NORMAL));
+    try t.expect(move_list.has("e1f2", .NORMAL));
+    try t.expect(move_list.has("e1d2", .CAPTURE));
 }
 
 test "starting_moves" {
