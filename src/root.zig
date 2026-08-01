@@ -233,9 +233,16 @@ const MoveList = struct {
     }
 };
 
+const CastlingRights = struct {
+    long: bool = true,
+    short: bool = true,
+};
+
 const Position = struct {
     // [color][piece type] bitmasks
     piece_boards: [2][6]Bitboard,
+    // [piece][short, long]
+    castling_rights: [2]CastlingRights = .{ .{}, .{} },
     side_to_move: Color,
 
     // the enemy (opposite) of the current side_to_move
@@ -279,6 +286,45 @@ const Position = struct {
                     break;
                 }
             } else unreachable;
+        } else if (move.move_type == .CASTLE) {
+            var old_rook_square: Square = undefined;
+            var new_rook_square: Square = undefined;
+
+            switch (move.to.file()) {
+                // long castle
+                2 => {
+                    switch (self.side_to_move) {
+                        .White => {
+                            old_rook_square = Square.at("a1");
+                            new_rook_square = Square.at("d1");
+                        },
+                        .Black => {
+                            old_rook_square = Square.at("a8");
+                            new_rook_square = Square.at("d8");
+                        },
+                    }
+                },
+                // short castle
+                6 => {
+                    switch (self.side_to_move) {
+                        .White => {
+                            old_rook_square = Square.at("h1");
+                            new_rook_square = Square.at("f1");
+                        },
+                        .Black => {
+                            old_rook_square = Square.at("h8");
+                            new_rook_square = Square.at("h8");
+                        },
+                    }
+                },
+                else => unreachable,
+            }
+
+            self.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()] ^= old_rook_square.mask();
+            self.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()] |= new_rook_square.mask();
+
+            self.castling_rights[self.side_to_move.idx()].long = false;
+            self.castling_rights[self.side_to_move.idx()].short = false;
         }
     }
 
@@ -363,6 +409,22 @@ test "position_apply" {
 
     try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask(), 0);
     try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask() != 0);
+}
+
+test "position_apply_castle" {
+    var pos = Position.init(.White);
+
+    pos.put(.White, .King, "e1");
+    pos.put(.White, .Rook, "h1");
+
+    const move = Move{ .from = .at("e1"), .to = .at("g1"), .move_type = .CASTLE };
+    pos.apply(move);
+
+    try t.expect(pos.piece_boards[Color.White.idx()][Piece.King.idx()] & move.to.mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.King.idx()] & move.from.mask(), 0);
+
+    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Rook.idx()] & Square.at("f1").mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Rook.idx()] & Square.at("h1").mask(), 0);
 }
 
 fn getAttacksPawn(from: Square, side: Color, occupied: Bitboard) Bitboard {
@@ -511,6 +573,42 @@ fn getPawnPushes(square: Square, side: Color, occupied: Bitboard) Bitboard {
     return result;
 }
 
+fn getCastleMoves(from: Square, side: Color, pos: *const Position, occupied: Bitboard, out: *MoveList) void {
+    if (side == .White and from.idx != Square.at("e1").idx) return;
+    if (side == .Black and from.idx != Square.at("e8").idx) return;
+    if (!pos.castling_rights[side.idx()].long and !pos.castling_rights[side.idx()].short) return;
+
+    if (isInCheck(pos, side)) return;
+
+    if (pos.castling_rights[side.idx()].short) blk: {
+        const squares: [2]Square = switch (side) {
+            .White => [2]Square{ .at("f1"), .at("g1") },
+            .Black => [2]Square{ .at("f8"), .at("g8") },
+        };
+
+        const mask = squares[0].mask() | squares[1].mask();
+
+        if (mask & occupied != 0) break :blk;
+        if (isAttacked(mask, side.opp(), pos)) break :blk;
+
+        out.append(from, squares[1], .CASTLE);
+    }
+
+    if (pos.castling_rights[side.idx()].long) blk: {
+        const squares: [3]Square = switch (side) {
+            .White => [3]Square{ .at("d1"), .at("c1"), .at("b1") },
+            .Black => [3]Square{ .at("d8"), .at("c8"), .at("b8") },
+        };
+
+        const mask = squares[0].mask() | squares[1].mask();
+
+        if ((mask | squares[2].mask()) & occupied != 0) break :blk;
+        if (isAttacked(mask, side.opp(), pos)) break :blk; // only the king path should be free from checks
+
+        out.append(from, squares[1], .CASTLE);
+    }
+}
+
 fn getMoveSquares(piece: Piece, from: Square, pos: *const Position, occupied: Bitboard) Bitboard {
     var squares = getAttacks(piece, pos.side_to_move, from, occupied);
 
@@ -557,6 +655,8 @@ fn findMovesFrom(
             }
             continue;
         }
+
+        if (piece == .King) getCastleMoves(from, pos.side_to_move, pos, occupied, out);
 
         const move_type: MoveType = if (mask & occupied_enemy == 0) .NORMAL else .CAPTURE;
         appendMoveIfLegal(.{ .from = from, .to = target, .move_type = move_type }, pos, out);
@@ -837,6 +937,65 @@ test "king_2" {
     try t.expect(move_list.has("e1f1", .NORMAL));
     try t.expect(move_list.has("e1f2", .NORMAL));
     try t.expect(move_list.has("e1d2", .CAPTURE));
+}
+
+test "castle_short" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, "e1");
+    pos.put(.White, .Rook, "h1");
+    pos.put(.White, .Pawn, "e2");
+    pos.put(.White, .Pawn, "d2");
+    pos.put(.White, .Pawn, "f2");
+    pos.put(.White, .Queen, "d1");
+
+    var move_list = MoveList{};
+    findMovesFrom(.King, .at("e1"), &pos, &move_list);
+
+    try t.expect(move_list.has("e1g1", .CASTLE));
+    try t.expect(!move_list.has("e1c1", .CASTLE));
+}
+
+test "castle_long_short" {
+    var pos = Position.init(.Black);
+    pos.put(.Black, .King, "e8");
+    pos.put(.Black, .Rook, "a8");
+
+    var move_list = MoveList{};
+    findMovesFrom(.King, .at("e8"), &pos, &move_list);
+
+    try t.expect(move_list.has("e8c8", .CASTLE));
+    try t.expect(move_list.has("e8g8", .CASTLE));
+}
+
+test "castle_king_in_check" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, "e1");
+    pos.put(.White, .Rook, "a1");
+    pos.put(.White, .Rook, "h1");
+
+    pos.put(.Black, .Rook, "e8");
+
+    var move_list = MoveList{};
+    findMovesFrom(.King, .at("e1"), &pos, &move_list);
+
+    try t.expect(!move_list.has("e1c1", .CASTLE));
+    try t.expect(!move_list.has("e1g1", .CASTLE));
+}
+
+test "castle_king_path_in_check" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, "e1");
+    pos.put(.White, .Rook, "a1");
+    pos.put(.White, .Rook, "h1");
+
+    pos.put(.Black, .Rook, "b8");
+    pos.put(.Black, .Rook, "g8");
+
+    var move_list = MoveList{};
+    findMovesFrom(.King, .at("e1"), &pos, &move_list);
+
+    try t.expect(!move_list.has("e1g1", .CASTLE));
+    try t.expect(move_list.has("e1c1", .CASTLE));
 }
 
 fn findAllMoves(pos: *const Position, out: *MoveList) void {
