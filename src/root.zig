@@ -2,8 +2,29 @@ const std = @import("std");
 const assert = std.debug.assert;
 const t = std.testing;
 
-// [color][piece type] bitmasks. LSB (bit 0) - a1, MSB (bit 63) - h8.
-const Bitboard = [2][6]u64;
+// LSB (bit 0) - a1, MSB (bit 63) - h8.
+const Bitboard = u64;
+
+inline fn idx_to_bitboard(idx: u8) Bitboard {
+    return @as(Bitboard, 1) << @intCast(idx);
+}
+
+fn print_bitboard(board: Bitboard) void {
+    std.debug.print("-" ** 33, .{});
+    std.debug.print("\n", .{});
+    for (0..8) |r| {
+        std.debug.print("|", .{});
+        for (0..8) |f| {
+            const idx = (7 - r) * 8 + f;
+            const mask = idx_to_bitboard(idx);
+            const c: u8 = if (board & mask == 0) ' ' else 'X';
+            std.debug.print(" {c} |", .{c});
+        }
+        std.debug.print("\n", .{});
+        std.debug.print("-" ** 33, .{});
+        std.debug.print("\n", .{});
+    }
+}
 
 const Color = enum(u1) {
     White,
@@ -75,8 +96,8 @@ const Square = struct {
     }
 
     // get bitmask for bitwise operations with bitboard
-    fn mask(self: Square) u64 {
-        return @as(u64, 1) << @intCast(self.idx);
+    fn mask(self: Square) Bitboard {
+        return idx_to_bitboard(self.idx);
     }
 };
 
@@ -205,7 +226,8 @@ const MoveList = struct {
 };
 
 const Position = struct {
-    pieces: Bitboard,
+    // [color][piece type] bitmasks
+    piece_boards: [2][6]Bitboard,
     side_to_move: Color,
 
     // the enemy (opposite) of the current side_to_move
@@ -216,7 +238,7 @@ const Position = struct {
     fn init(side_to_move: Color) Position {
         return .{
             .side_to_move = side_to_move,
-            .pieces = .{
+            .piece_boards = .{
                 @splat(0),
                 @splat(0),
             },
@@ -227,14 +249,14 @@ const Position = struct {
         const square = Square.at(addr);
         assert(self.occupied() & square.mask() == 0);
 
-        self.pieces[color.idx()][piece.idx()] |= square.mask();
+        self.piece_boards[color.idx()][piece.idx()] |= square.mask();
     }
 
     fn apply(self: *Position, move: Move) void {
         const from_mask = move.from.mask();
         const to_mask = move.to.mask();
 
-        for (&self.pieces[self.side_to_move.idx()]) |*bitmask| {
+        for (&self.piece_boards[self.side_to_move.idx()]) |*bitmask| {
             if (bitmask.* & from_mask != 0) {
                 bitmask.* ^= from_mask;
                 bitmask.* |= to_mask;
@@ -243,7 +265,7 @@ const Position = struct {
         } else unreachable;
 
         if (move.move_type == .CAPTURE) {
-            for (&self.pieces[self.side_enemy().idx()]) |*bitmask| {
+            for (&self.piece_boards[self.side_enemy().idx()]) |*bitmask| {
                 if (bitmask.* & to_mask != 0) {
                     bitmask.* ^= to_mask;
                     break;
@@ -254,7 +276,7 @@ const Position = struct {
 
     fn start() Position {
         return .{
-            .pieces = .{
+            .piece_boards = .{
                 .{
                     0x000000000000ff00,
                     0x0000000000000042,
@@ -282,7 +304,7 @@ const Position = struct {
 
         inline for (std.enums.values(Color), 0..) |col, ci| {
             inline for (std.enums.values(Piece), 0..) |piece, pi| {
-                const bitmask = self.pieces[ci][pi];
+                const bitmask = self.piece_boards[ci][pi];
 
                 for (0..64) |i| {
                     if ((bitmask >> @truncate(i)) & 1 == 1) {
@@ -307,14 +329,14 @@ const Position = struct {
         }
     }
 
-    fn occupied(self: *const Position) u64 {
+    fn occupied(self: *const Position) Bitboard {
         return self.occupiedBy(.White) | self.occupiedBy(.Black);
     }
 
-    fn occupiedBy(self: *const Position, color: Color) u64 {
-        var result: u64 = 0;
+    fn occupiedBy(self: *const Position, color: Color) Bitboard {
+        var result: Bitboard = 0;
         inline for (std.enums.values(Piece)) |piece| {
-            result |= self.pieces[color.idx()][piece.idx()];
+            result |= self.piece_boards[color.idx()][piece.idx()];
         }
 
         return result;
@@ -326,17 +348,17 @@ test "position_apply" {
 
     const move = Move{ .from = .at("e2"), .to = .at("e4"), .move_type = .NORMAL };
 
-    try t.expect(pos.pieces[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask() != 0);
-    try t.expectEqual(pos.pieces[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask(), 0);
+    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask(), 0);
 
     pos.apply(move);
 
-    try t.expectEqual(pos.pieces[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask(), 0);
-    try t.expect(pos.pieces[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask(), 0);
+    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask() != 0);
 }
 
-fn getAttacksPawn(from: Square, side: Color, occupied: u64) u64 {
-    var result: u64 = 0;
+fn getAttacksPawn(from: Square, side: Color, occupied: Bitboard) Bitboard {
+    var result: Bitboard = 0;
 
     const left = if (side == .White) from.rel(-1, 1) else from.rel(1, -1);
     if (left != null and left.?.mask() & occupied != 0) result |= left.?.mask();
@@ -347,7 +369,7 @@ fn getAttacksPawn(from: Square, side: Color, occupied: u64) u64 {
     return result;
 }
 
-fn getAttacksKnight(from: Square) u64 {
+fn getAttacksKnight(from: Square) Bitboard {
     const directions = [_]struct { x: i8, y: i8 }{
         .{ .x = -1, .y = 2 },
         .{ .x = 1, .y = 2 },
@@ -359,7 +381,7 @@ fn getAttacksKnight(from: Square) u64 {
         .{ .x = 2, .y = -1 },
     };
 
-    var result: u64 = 0;
+    var result: Bitboard = 0;
 
     for (&directions) |dir| {
         const target = from.rel(dir.x, dir.y);
@@ -369,7 +391,7 @@ fn getAttacksKnight(from: Square) u64 {
     return result;
 }
 
-fn getAttacksBishop(from: Square, occupied: u64) u64 {
+fn getAttacksBishop(from: Square, occupied: Bitboard) Bitboard {
     const directions = [_]struct { x: i8, y: i8 }{
         .{ .x = -1, .y = 1 },
         .{ .x = 1, .y = 1 },
@@ -377,7 +399,7 @@ fn getAttacksBishop(from: Square, occupied: u64) u64 {
         .{ .x = 1, .y = -1 },
     };
 
-    var result: u64 = 0;
+    var result: Bitboard = 0;
 
     for (&directions) |*dir| {
         inner: for (1..8) |i| {
@@ -394,7 +416,7 @@ fn getAttacksBishop(from: Square, occupied: u64) u64 {
     return result;
 }
 
-fn getAttacksRook(from: Square, occupied: u64) u64 {
+fn getAttacksRook(from: Square, occupied: Bitboard) Bitboard {
     const directions = [_]struct { x: i8, y: i8 }{
         .{ .x = 1, .y = 0 },
         .{ .x = -1, .y = 0 },
@@ -402,7 +424,7 @@ fn getAttacksRook(from: Square, occupied: u64) u64 {
         .{ .x = 0, .y = -1 },
     };
 
-    var result: u64 = 0;
+    var result: Bitboard = 0;
 
     for (&directions) |*dir| {
         inner: for (1..8) |i| {
@@ -420,11 +442,11 @@ fn getAttacksRook(from: Square, occupied: u64) u64 {
     return result;
 }
 
-fn getAttacksQueen(from: Square, occupied: u64) u64 {
+fn getAttacksQueen(from: Square, occupied: Bitboard) Bitboard {
     return getAttacksBishop(from, occupied) | getAttacksRook(from, occupied);
 }
 
-fn getAttacksKing(from: Square) u64 {
+fn getAttacksKing(from: Square) Bitboard {
     const directions = [_]struct { x: i8, y: i8 }{
         .{ .x = 1, .y = 0 },
         .{ .x = -1, .y = 0 },
@@ -436,7 +458,7 @@ fn getAttacksKing(from: Square) u64 {
         .{ .x = -1, .y = -1 },
     };
 
-    var result: u64 = 0;
+    var result: Bitboard = 0;
 
     for (&directions) |*dir| {
         const target = from.rel(dir.x, dir.y);
@@ -448,7 +470,7 @@ fn getAttacksKing(from: Square) u64 {
     return result;
 }
 
-fn getAttacks(piece: Piece, side: Color, from: Square, occupied: u64) u64 {
+fn getAttacks(piece: Piece, side: Color, from: Square, occupied: Bitboard) Bitboard {
     return switch (piece) {
         Piece.Pawn => getAttacksPawn(from, side, occupied),
         Piece.Knight => getAttacksKnight(from),
@@ -459,8 +481,8 @@ fn getAttacks(piece: Piece, side: Color, from: Square, occupied: u64) u64 {
     };
 }
 
-fn getPawnPushes(square: Square, side: Color, occupied: u64) u64 {
-    var result: u64 = 0;
+fn getPawnPushes(square: Square, side: Color, occupied: Bitboard) Bitboard {
+    var result: Bitboard = 0;
 
     // push single
     var target = if (side == .White) square.rel(0, 1) else square.rel(0, -1);
@@ -481,7 +503,7 @@ fn getPawnPushes(square: Square, side: Color, occupied: u64) u64 {
     return result;
 }
 
-fn getMoveSquares(piece: Piece, from: Square, pos: *const Position, occupied: u64) u64 {
+fn getMoveSquares(piece: Piece, from: Square, pos: *const Position, occupied: Bitboard) Bitboard {
     var squares = getAttacks(piece, pos.side_to_move, from, occupied);
 
     if (piece == .Pawn) {
@@ -784,13 +806,12 @@ test "king_2" {
 
 fn findAllMoves(pos: *const Position, out: *MoveList) void {
     for (std.enums.values(Piece)) |piece| {
-        var placements = pos.pieces[pos.side_to_move.idx()][piece.idx()];
+        var placements = pos.piece_boards[pos.side_to_move.idx()][piece.idx()];
 
-        while (placements != 0) {
+        while (placements != 0) : (placements &= placements - 1) {
             const idx = @ctz(placements);
 
             findMovesFrom(piece, .get(idx), pos, out);
-            placements &= placements - 1;
         }
     }
 }
@@ -810,8 +831,8 @@ test "starting_moves" {
     try t.expectEqual(20, move_list.len);
 }
 
-fn isAttackedBy(area_mask: u64, piece: Piece, attacker: Color, pos: *const Position, occupied: u64) bool {
-    var pieces = pos.pieces[attacker.idx()][piece.idx()];
+fn isAttackedBy(area_mask: Bitboard, piece: Piece, attacker: Color, pos: *const Position, occupied: Bitboard) bool {
+    var pieces = pos.piece_boards[attacker.idx()][piece.idx()];
     while (pieces != 0) : (pieces &= pieces - 1) {
         const idx = @ctz(pieces);
         const attacks = getAttacks(piece, attacker, .get(idx), occupied);
@@ -822,7 +843,7 @@ fn isAttackedBy(area_mask: u64, piece: Piece, attacker: Color, pos: *const Posit
 }
 
 // is any square in the area mask attacked by any piece of the attacker side
-fn isAttacked(area: u64, attacker: Color, pos: *const Position) bool {
+fn isAttacked(area: Bitboard, attacker: Color, pos: *const Position) bool {
     const occupied = pos.occupied();
 
     inline for (std.enums.values(Piece)) |piece| {
@@ -833,7 +854,7 @@ fn isAttacked(area: u64, attacker: Color, pos: *const Position) bool {
 }
 
 fn isInCheck(pos: *const Position, side: Color) bool {
-    const king_mask = pos.pieces[side.idx()][Piece.King.idx()];
+    const king_mask = pos.piece_boards[side.idx()][Piece.King.idx()];
 
     return isAttacked(king_mask, side.opp(), pos);
 }
@@ -951,22 +972,5 @@ pub fn run() void {
 
     for (0..move_list.len) |i| {
         std.debug.print("{s}\n", .{move_list.moves[i].str()});
-    }
-}
-
-fn print_bitmask(bitmask: u64) void {
-    std.debug.print("-" ** 33, .{});
-    std.debug.print("\n", .{});
-    for (0..8) |r| {
-        std.debug.print("|", .{});
-        for (0..8) |f| {
-            const idx = (7 - r) * 8 + f;
-            const mask = @as(u64, 1) << @intCast(idx);
-            const c: u8 = if (bitmask & mask == 0) ' ' else 'X';
-            std.debug.print(" {c} |", .{c});
-        }
-        std.debug.print("\n", .{});
-        std.debug.print("-" ** 33, .{});
-        std.debug.print("\n", .{});
     }
 }
