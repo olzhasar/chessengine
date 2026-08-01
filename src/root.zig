@@ -149,6 +149,13 @@ const Piece = enum(u3) {
     }
 };
 
+const PromotionPieces = [_]Piece{
+    Piece.Knight,
+    Piece.Bishop,
+    Piece.Rook,
+    Piece.Queen,
+};
+
 const MoveType = enum {
     NORMAL,
     CAPTURE,
@@ -161,6 +168,7 @@ const Move = struct {
     from: Square,
     to: Square,
     move_type: MoveType = .NORMAL,
+    promotion_piece: ?Piece = null,
 
     fn str(self: Move) [4]u8 {
         return [4]u8{
@@ -516,6 +524,13 @@ fn getMoveSquares(piece: Piece, from: Square, pos: *const Position, occupied: Bi
     return squares;
 }
 
+inline fn appendMoveIfLegal(move: Move, pos: *const Position, out: *MoveList) void {
+    var pos_copy = pos.*;
+    pos_copy.apply(move);
+
+    if (!isInCheck(&pos_copy, pos_copy.side_to_move)) out.append_move(move);
+}
+
 fn findMovesFrom(
     piece: Piece,
     from: Square,
@@ -536,15 +551,15 @@ fn findMovesFrom(
 
         if (mask & occupied_self != 0) continue;
 
-        var move_type: MoveType = undefined;
-        move_type = if (mask & occupied_enemy == 0) .NORMAL else .CAPTURE;
+        if (piece == .Pawn and (target.file() == from.file()) and (target.rank() == 7 or target.rank() == 0)) {
+            inline for (PromotionPieces) |prom_piece| {
+                appendMoveIfLegal(.{ .from = from, .to = target, .move_type = .PROMOTION, .promotion_piece = prom_piece }, pos, out);
+            }
+            continue;
+        }
 
-        const move = Move{ .from = from, .to = target, .move_type = move_type };
-
-        var pos_copy = pos.*;
-        pos_copy.apply(move);
-
-        if (!isInCheck(&pos_copy, pos_copy.side_to_move)) out.append_move(move);
+        const move_type: MoveType = if (mask & occupied_enemy == 0) .NORMAL else .CAPTURE;
+        appendMoveIfLegal(.{ .from = from, .to = target, .move_type = move_type }, pos, out);
     }
 }
 
@@ -627,6 +642,26 @@ test "pawn_capture_2" {
     try t.expectEqual(1, move_list.len);
 
     try t.expect(move_list.has("d5c4", .CAPTURE));
+}
+
+test "pawn_promotions" {
+    var pos = Position.init(.White);
+
+    pos.put(.White, .Pawn, "e7");
+
+    var move_list = MoveList{};
+
+    findMovesFrom(.Pawn, .at("e7"), &pos, &move_list);
+
+    try t.expectEqual(4, move_list.len);
+
+    for (0..move_list.len) |i| {
+        const move = move_list.moves[i];
+        try t.expectEqual(MoveType.PROMOTION, move.move_type);
+        try t.expectEqualStrings("e7e8", &move.str());
+        try t.expectEqualStrings("e8", &move.to.str());
+        try t.expectEqualStrings("e7", &move.from.str());
+    }
 }
 
 test "knight" {
