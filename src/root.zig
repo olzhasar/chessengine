@@ -15,7 +15,7 @@ fn print_bitboard(board: Bitboard) void {
     for (0..8) |r| {
         std.debug.print("|", .{});
         for (0..8) |f| {
-            const idx = (7 - r) * 8 + f;
+            const idx: u8 = @intCast((7 - r) * 8 + f);
             const mask = idx_to_bitboard(idx);
             const c: u8 = if (board & mask == 0) ' ' else 'X';
             std.debug.print(" {c} |", .{c});
@@ -267,6 +267,25 @@ const Position = struct {
         self.piece_boards[color.idx()][piece.idx()] |= square.mask();
     }
 
+    fn parse_and_apply(self: *Position, input: []const u8) void {
+        const occupied_self = self.occupiedBy(self.side_to_move);
+        const occupied_enemy = self.occupiedBy(self.side_enemy());
+
+        var move: Move = .{ .from = .at(input[0..2]), .to = .at(input[2..4]) };
+        assert(move.from.mask() & occupied_self != 0);
+        assert(move.to.mask() & occupied_self == 0);
+
+        assert(move.to.mask() & occupied_self == 0);
+
+        if (move.to.mask() & occupied_enemy != 0) {
+            move.move_type = .CAPTURE;
+        }
+
+        // FIXME: castle, promotion
+
+        self.apply(move);
+    }
+
     fn apply(self: *Position, move: Move) void {
         const from_mask = move.from.mask();
         const to_mask = move.to.mask();
@@ -326,6 +345,10 @@ const Position = struct {
             self.castling_rights[self.side_to_move.idx()].long = false;
             self.castling_rights[self.side_to_move.idx()].short = false;
         }
+    }
+
+    fn switchSide(self: *Position) void {
+        self.side_to_move = self.side_to_move.opp();
     }
 
     fn start() Position {
@@ -401,6 +424,23 @@ test "position_apply" {
     var pos = Position.start();
 
     const move = Move{ .from = .at("e2"), .to = .at("e4"), .move_type = .NORMAL };
+
+    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask(), 0);
+
+    pos.apply(move);
+
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask(), 0);
+    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask() != 0);
+}
+
+test "position_apply_capture" {
+    var pos = Position.init(.White);
+
+    pos.put(.White, .Pawn, "e4");
+    pos.put(.Black, .Pawn, "d5");
+
+    const move = Move{ .from = .at("e4"), .to = .at("d5"), .move_type = .NORMAL };
 
     try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask() != 0);
     try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask(), 0);
@@ -1155,16 +1195,32 @@ test "skips_moves_exposing_king" {
     try t.expect(!move_list.has("b2b4", .NORMAL));
 }
 
-pub fn run() void {
-    const position = Position.start();
-    position.print();
+pub const Game = struct {
+    position: Position,
 
-    var move_list: MoveList = .{};
-    findAllMoves(&position, &move_list);
-
-    std.debug.print("moves: {}\n", .{move_list.len});
-
-    for (0..move_list.len) |i| {
-        std.debug.print("{s}\n", .{move_list.moves[i].str()});
+    pub fn new() Game {
+        return .{
+            .position = .start(),
+        };
     }
-}
+
+    pub fn list_moves(self: *Game) void {
+        var move_list: MoveList = .{};
+        findAllMoves(&self.position, &move_list);
+
+        for (0..move_list.len) |i| {
+            std.debug.print("{s}\n", .{move_list.moves[i].str()});
+        }
+    }
+
+    pub fn draw_board(self: *Game) void {
+        self.position.print();
+    }
+
+    pub fn go(self: *Game, input: []const u8) !void {
+        if (input.len != 4) return error.InvalidMove;
+
+        self.position.parse_and_apply(input);
+        self.position.switchSide();
+    }
+};
