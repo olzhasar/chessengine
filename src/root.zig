@@ -40,6 +40,10 @@ const Color = enum(u1) {
         return .White;
     }
 
+    fn pawn_direction(self: Color) i3 {
+        return if (self == .White) 1 else -1;
+    }
+
     fn symbol(self: Color) u8 {
         if (self == .White) return 'W' else return 'B';
     }
@@ -161,7 +165,6 @@ const MoveType = enum {
     CAPTURE,
     CASTLE,
     PROMOTION,
-    EN_PASSANT,
 };
 
 const Move = struct {
@@ -231,6 +234,10 @@ const MoveList = struct {
             std.debug.print("{s}\n", .{move.str()});
         }
     }
+
+    fn reset(self: *MoveList) void {
+        self.len = 0;
+    }
 };
 
 const CastlingRights = struct {
@@ -244,6 +251,7 @@ const Position = struct {
     // [piece][short, long]
     castling_rights: [2]CastlingRights = .{ .{}, .{} },
     side_to_move: Color,
+    en_passant_targets: Bitboard = 0,
 
     // the enemy (opposite) of the current side_to_move
     fn side_enemy(self: *const Position) Color {
@@ -267,7 +275,7 @@ const Position = struct {
         self.piece_boards[color.idx()][piece.idx()] |= square.mask();
     }
 
-    fn parse_and_apply(self: *Position, input: []const u8) void {
+    fn parse_move(self: *Position, input: []const u8) Move {
         const occupied_self = self.occupiedBy(self.side_to_move);
         const occupied_enemy = self.occupiedBy(self.side_enemy());
 
@@ -277,23 +285,52 @@ const Position = struct {
 
         assert(move.to.mask() & occupied_self == 0);
 
-        if (move.to.mask() & occupied_enemy != 0) {
+        if (move.to.mask() & occupied_enemy != 0 or move.to.mask() & self.en_passant_targets != 0) {
             move.move_type = .CAPTURE;
         }
 
+        return move;
         // FIXME: castle, promotion
+        //
+        // TODO: validate if move is valid
+    }
+
+    fn go(self: *Position, input: []const u8) void {
+        const move = self.parse_move(input);
 
         self.apply(move);
+    }
+
+    fn resetEnPassantTargets(self: *Position, side: Color) void {
+        var mask: u64 = (1 << 32) - 1;
+        if (side == .White) mask = ~mask;
+
+        self.en_passant_targets &= mask;
     }
 
     fn apply(self: *Position, move: Move) void {
         const from_mask = move.from.mask();
         const to_mask = move.to.mask();
 
-        for (&self.piece_boards[self.side_to_move.idx()]) |*bitmask| {
+        self.resetEnPassantTargets(self.side_to_move);
+
+        for (std.enums.values(Piece)) |piece| {
+            const bitmask = &self.piece_boards[self.side_to_move.idx()][piece.idx()];
+
             if (bitmask.* & from_mask != 0) {
                 bitmask.* ^= from_mask;
                 bitmask.* |= to_mask;
+
+                // en passant
+                if (piece == .Pawn and @abs(@as(i8, move.to.rank()) - @as(i8, move.from.rank())) == 2) {
+                    const en_passant_square: ?Square = switch (self.side_to_move) {
+                        .White => move.to.rel(0, -1),
+                        .Black => move.to.rel(0, 1),
+                    };
+
+                    self.en_passant_targets |= en_passant_square.?.mask();
+                }
+
                 break;
             }
         } else unreachable;
@@ -304,7 +341,17 @@ const Position = struct {
                     bitmask.* ^= to_mask;
                     break;
                 }
-            } else unreachable;
+            } else {
+                // en passant
+                assert(self.en_passant_targets & move.to.mask() != 0);
+                const pawn_to_capture = switch (self.side_to_move) {
+                    .White => move.to.rel(0, -1),
+                    .Black => move.to.rel(0, 1),
+                };
+
+                assert(self.piece_boards[self.side_enemy().idx()][Piece.Pawn.idx()] & pawn_to_capture.?.mask() != 0);
+                self.piece_boards[self.side_enemy().idx()][Piece.Pawn.idx()] ^= pawn_to_capture.?.mask();
+            }
         } else if (move.move_type == .CASTLE) {
             var old_rook_square: Square = undefined;
             var new_rook_square: Square = undefined;
@@ -345,6 +392,8 @@ const Position = struct {
             self.castling_rights[self.side_to_move.idx()].long = false;
             self.castling_rights[self.side_to_move.idx()].short = false;
         }
+
+        self.switchSide();
     }
 
     fn switchSide(self: *Position) void {
@@ -418,6 +467,18 @@ const Position = struct {
 
         return result;
     }
+
+    fn getPieceAt(self: *const Position, addr: *const [2]u8) ?Piece {
+        const square = Square.at(addr);
+
+        for (0..2) |ci| {
+            for (std.enums.values(Piece)) |piece| {
+                if (self.piece_boards[ci][piece.idx()] & square.mask() != 0) return piece;
+            }
+        }
+
+        return null;
+    }
 };
 
 test "position_apply" {
@@ -465,6 +526,39 @@ test "position_apply_castle" {
 
     try t.expect(pos.piece_boards[Color.White.idx()][Piece.Rook.idx()] & Square.at("f1").mask() != 0);
     try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Rook.idx()] & Square.at("h1").mask(), 0);
+}
+
+test "position_apply_en_passant_push" {
+    var pos = Position.init(.Black);
+
+    pos.put(.White, .Pawn, "e5");
+    pos.put(.Black, .Pawn, "f7");
+
+    pos.go("f7f5");
+
+    try t.expect(pos.en_passant_targets & Square.at("f6").mask() != 0);
+}
+
+test "position_apply_en_passant_capture" {
+    var pos = Position.init(.White);
+
+    pos.put(.Black, .Pawn, "c4");
+    pos.put(.White, .Pawn, "b2");
+    pos.put(.White, .Pawn, "a2");
+
+    pos.put(.White, .Pawn, "e5");
+    pos.put(.Black, .Pawn, "f7");
+
+    pos.go("b2b4");
+    pos.go("c4b3");
+
+    pos.go("a2b3");
+
+    pos.go("f7f5");
+    pos.go("e5f6");
+
+    try t.expectEqual(Piece.Pawn, pos.getPieceAt("b3"));
+    try t.expectEqual(null, pos.getPieceAt("b4"));
 }
 
 fn getAttacksPawn(from: Square, side: Color, occupied: Bitboard) Bitboard {
@@ -595,7 +689,7 @@ fn getPawnPushes(square: Square, side: Color, occupied: Bitboard) Bitboard {
     var result: Bitboard = 0;
 
     // push single
-    var target = if (side == .White) square.rel(0, 1) else square.rel(0, -1);
+    var target = square.rel(0, side.pawn_direction());
     if (target == null or occupied & target.?.mask() != 0) return result;
 
     result |= target.?.mask();
@@ -604,13 +698,30 @@ fn getPawnPushes(square: Square, side: Color, occupied: Bitboard) Bitboard {
     if (side == .White and square.rank() != 1) return result;
     if (side == .Black and square.rank() != 6) return result;
 
-    target = if (side == .White) square.rel(0, 2) else square.rel(0, -2);
+    target = square.rel(0, side.pawn_direction() * 2);
 
     if (target != null and occupied & target.?.mask() == 0) {
         result |= target.?.mask();
     }
 
     return result;
+}
+
+fn getEnPassantMoves(from: Square, side: Color, pos: *const Position, out: *MoveList) void {
+    const expected_rank: u3 = if (side == .White) 4 else 3;
+    if (from.rank() != expected_rank) return;
+
+    const targets = [2]?Square{ from.rel(1, side.pawn_direction()), from.rel(-1, side.pawn_direction()) };
+
+    for (targets) |target| {
+        if (target == null) continue;
+
+        if (target.?.mask() & pos.en_passant_targets != 0) {
+            out.append(from, target.?, .CAPTURE);
+        }
+    }
+
+    return;
 }
 
 fn getCastleMoves(from: Square, side: Color, pos: *const Position, occupied: Bitboard, out: *MoveList) void {
@@ -666,7 +777,7 @@ inline fn appendMoveIfLegal(move: Move, pos: *const Position, out: *MoveList) vo
     var pos_copy = pos.*;
     pos_copy.apply(move);
 
-    if (!isInCheck(&pos_copy, pos_copy.side_to_move)) out.append_move(move);
+    if (!isInCheck(&pos_copy, pos.side_to_move)) out.append_move(move);
 }
 
 fn findMovesFrom(
@@ -689,14 +800,16 @@ fn findMovesFrom(
 
         if (mask & occupied_self != 0) continue;
 
-        if (piece == .Pawn and (target.file() == from.file()) and (target.rank() == 7 or target.rank() == 0)) {
-            inline for (PromotionPieces) |prom_piece| {
-                appendMoveIfLegal(.{ .from = from, .to = target, .move_type = .PROMOTION, .promotion_piece = prom_piece }, pos, out);
-            }
-            continue;
-        }
+        if (piece == .Pawn) {
+            getEnPassantMoves(from, pos.side_to_move, pos, out);
 
-        if (piece == .King) getCastleMoves(from, pos.side_to_move, pos, occupied, out);
+            if (target.file() == from.file() and (target.rank() == 7 or target.rank() == 0)) {
+                inline for (PromotionPieces) |prom_piece| {
+                    appendMoveIfLegal(.{ .from = from, .to = target, .move_type = .PROMOTION, .promotion_piece = prom_piece }, pos, out);
+                }
+                continue;
+            }
+        } else if (piece == .King) getCastleMoves(from, pos.side_to_move, pos, occupied, out);
 
         const move_type: MoveType = if (mask & occupied_enemy == 0) .NORMAL else .CAPTURE;
         appendMoveIfLegal(.{ .from = from, .to = target, .move_type = move_type }, pos, out);
@@ -802,6 +915,33 @@ test "pawn_promotions" {
         try t.expectEqualStrings("e8", &move.to.str());
         try t.expectEqualStrings("e7", &move.from.str());
     }
+}
+
+test "pawn_en_passant" {
+    var pos = Position.init(.White);
+
+    pos.put(.White, .Pawn, "e2");
+    pos.put(.Black, .Pawn, "d4");
+
+    pos.put(.White, .Pawn, "e5");
+    pos.put(.Black, .Pawn, "f7");
+
+    pos.go("e2e4");
+
+    var move_list = MoveList{};
+
+    findMovesFrom(.Pawn, .at("d4"), &pos, &move_list);
+
+    try t.expectEqual(2, move_list.len);
+    try t.expect(move_list.has("d4e3", .CAPTURE));
+
+    pos.go("f7f5");
+
+    move_list.reset();
+    findMovesFrom(.Pawn, .at("e5"), &pos, &move_list);
+
+    try t.expectEqual(2, move_list.len);
+    try t.expect(move_list.has("e5f6", .CAPTURE));
 }
 
 test "knight" {
@@ -1220,7 +1360,6 @@ pub const Game = struct {
     pub fn go(self: *Game, input: []const u8) !void {
         if (input.len != 4) return error.InvalidMove;
 
-        self.position.parse_and_apply(input);
-        self.position.switchSide();
+        self.position.go(input);
     }
 };
