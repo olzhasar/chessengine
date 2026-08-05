@@ -9,6 +9,10 @@ inline fn idx_to_bitboard(idx: u8) Bitboard {
     return @as(Bitboard, 1) << @intCast(idx);
 }
 
+const GameError = error{
+    InvalidMove,
+};
+
 fn print_bitboard(board: Bitboard) void {
     std.debug.print("-" ** 33, .{});
     std.debug.print("\n", .{});
@@ -42,6 +46,14 @@ const Color = enum(u1) {
 
     fn pawn_direction(self: Color) i3 {
         return if (self == .White) 1 else -1;
+    }
+
+    fn start_rank(self: Color) u3 {
+        return if (self == .White) 0 else 7;
+    }
+
+    fn end_rank(self: Color) u3 {
+        return if (self == .White) 7 else 0;
     }
 
     fn symbol(self: Color) u8 {
@@ -118,6 +130,11 @@ test "square_from_addr" {
         try t.expectEqualStrings(case.input, &sq.str());
     }
 }
+
+const SquareContent = struct {
+    piece: ?Piece,
+    color: ?Color,
+};
 
 const Piece = enum(u3) {
     Pawn,
@@ -275,28 +292,51 @@ const Position = struct {
         self.piece_boards[color.idx()][piece.idx()] |= square.mask();
     }
 
-    fn parse_move(self: *Position, input: []const u8) Move {
+    fn parse_move(self: *Position, input: []const u8) !Move {
         const occupied_self = self.occupiedBy(self.side_to_move);
         const occupied_enemy = self.occupiedBy(self.side_enemy());
 
         var move: Move = .{ .from = .at(input[0..2]), .to = .at(input[2..4]) };
-        assert(move.from.mask() & occupied_self != 0);
-        assert(move.to.mask() & occupied_self == 0);
+        if (move.from.mask() & occupied_self == 0) return GameError.InvalidMove;
+        if (move.to.mask() & occupied_self != 0) return GameError.InvalidMove;
 
-        assert(move.to.mask() & occupied_self == 0);
+        if (input.len < 4 or input.len > 5) return GameError.InvalidMove;
 
-        if (move.to.mask() & occupied_enemy != 0 or move.to.mask() & self.en_passant_targets != 0) {
+        const piece = self.getPieceAt(input[0..2]).?;
+        if (piece == .King) {
+            if (input.len != 4) return GameError.InvalidMove;
+            switch (self.side_to_move) {
+                .White => {
+                    if (move.from.idx == Square.at("e1").idx) {
+                        if (move.to.idx == Square.at("c1").idx or move.to.idx == Square.at("g1").idx) move.move_type = .CASTLE;
+                    }
+                },
+                .Black => {
+                    if (move.from.idx == Square.at("e8").idx) {
+                        if (move.to.idx == Square.at("c8").idx or move.to.idx == Square.at("g8").idx) move.move_type = .CASTLE;
+                    }
+                },
+            }
+        } else if (move.to.mask() & occupied_enemy != 0 or move.to.mask() & self.en_passant_targets != 0) {
+            if (input.len != 4) return GameError.InvalidMove;
             move.move_type = .CAPTURE;
-        }
+        } else if (piece == .Pawn and move.to.rank() == self.side_to_move.end_rank()) {
+            if (input.len != 5) return GameError.InvalidMove;
+            move.move_type = .PROMOTION;
+            move.promotion_piece = switch (input[4]) {
+                'q' => .Queen,
+                'r' => .Rook,
+                'b' => .Bishop,
+                'n' => .Knight,
+                else => return GameError.InvalidMove,
+            };
+        } else if (input.len != 4) return GameError.InvalidMove;
 
         return move;
-        // FIXME: castle, promotion
-        //
-        // TODO: validate if move is valid
     }
 
-    fn go(self: *Position, input: []const u8) void {
-        const move = self.parse_move(input);
+    fn go(self: *Position, input: []const u8) !void {
+        const move = try self.parse_move(input);
 
         self.apply(move);
     }
@@ -479,6 +519,21 @@ const Position = struct {
 
         return null;
     }
+
+    fn getSquareContent(self: *const Position, square: Square) ?SquareContent {
+        var content: SquareContent = undefined;
+
+        for (std.enums.values(Color)) |color| {
+            for (std.enums.values(Piece)) |piece| {
+                if (self.piece_boards[color.idx()][piece.idx()] & square.mask() != 0) {
+                    content.piece = piece;
+                    content.color = color;
+                }
+            }
+        }
+
+        return null;
+    }
 };
 
 test "position_apply" {
@@ -534,7 +589,7 @@ test "position_apply_en_passant_push" {
     pos.put(.White, .Pawn, "e5");
     pos.put(.Black, .Pawn, "f7");
 
-    pos.go("f7f5");
+    try pos.go("f7f5");
 
     try t.expect(pos.en_passant_targets & Square.at("f6").mask() != 0);
 }
@@ -549,16 +604,55 @@ test "position_apply_en_passant_capture" {
     pos.put(.White, .Pawn, "e5");
     pos.put(.Black, .Pawn, "f7");
 
-    pos.go("b2b4");
-    pos.go("c4b3");
+    try pos.go("b2b4");
+    try pos.go("c4b3");
 
-    pos.go("a2b3");
+    try pos.go("a2b3");
 
-    pos.go("f7f5");
-    pos.go("e5f6");
+    try pos.go("f7f5");
+    try pos.go("e5f6");
 
     try t.expectEqual(Piece.Pawn, pos.getPieceAt("b3"));
     try t.expectEqual(null, pos.getPieceAt("b4"));
+}
+
+test "parse_move" {
+    var pos = Position.init(.White);
+
+    pos.put(.White, .Pawn, "e4");
+    pos.put(.Black, .Pawn, "d5");
+
+    var move: Move = undefined;
+    move = try pos.parse_move("e4e5");
+
+    try t.expectEqualStrings("e4", &move.from.str());
+    try t.expectEqualStrings("e5", &move.to.str());
+    try t.expectEqual(MoveType.NORMAL, move.move_type);
+
+    move = try pos.parse_move("e4d5");
+
+    try t.expectEqualStrings("e4", &move.from.str());
+    try t.expectEqualStrings("d5", &move.to.str());
+    try t.expectEqual(MoveType.CAPTURE, move.move_type);
+
+    pos.put(.White, .King, "e1");
+    pos.put(.White, .Rook, "a1");
+    pos.put(.White, .Rook, "h1");
+
+    move = try pos.parse_move("e1g1");
+
+    try t.expectEqualStrings("e1", &move.from.str());
+    try t.expectEqualStrings("g1", &move.to.str());
+    try t.expectEqual(MoveType.CASTLE, move.move_type);
+
+    pos.put(.White, .Pawn, "b7");
+
+    move = try pos.parse_move("b7b8q");
+
+    try t.expectEqualStrings("b7", &move.from.str());
+    try t.expectEqualStrings("b8", &move.to.str());
+    try t.expectEqual(MoveType.PROMOTION, move.move_type);
+    try t.expectEqual(Piece.Queen, move.promotion_piece);
 }
 
 fn getAttacksPawn(from: Square, side: Color, occupied: Bitboard) Bitboard {
@@ -765,9 +859,6 @@ fn getMoveSquares(piece: Piece, from: Square, pos: *const Position, occupied: Bi
 
     if (piece == .Pawn) {
         squares |= getPawnPushes(from, pos.side_to_move, occupied);
-
-        // TODO: promotions
-        // TODO: en passant
     }
 
     return squares;
@@ -926,7 +1017,7 @@ test "pawn_en_passant" {
     pos.put(.White, .Pawn, "e5");
     pos.put(.Black, .Pawn, "f7");
 
-    pos.go("e2e4");
+    try pos.go("e2e4");
 
     var move_list = MoveList{};
 
@@ -935,7 +1026,7 @@ test "pawn_en_passant" {
     try t.expectEqual(2, move_list.len);
     try t.expect(move_list.has("d4e3", .CAPTURE));
 
-    pos.go("f7f5");
+    try pos.go("f7f5");
 
     move_list.reset();
     findMovesFrom(.Pawn, .at("e5"), &pos, &move_list);
