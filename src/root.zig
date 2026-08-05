@@ -1423,6 +1423,35 @@ test "skips_moves_exposing_king" {
     try t.expect(!move_list.has("b2b4", .NORMAL));
 }
 
+fn perft(pos: Position, depth: u8) u64 {
+    if (depth == 0) return 1;
+    var result: u64 = 0;
+
+    var move_list = MoveList{};
+    findAllMoves(&pos, &move_list);
+
+    for (0..move_list.len) |i| {
+        var temp_pos = pos;
+        const move = move_list.moves[i];
+        temp_pos.apply(move);
+        result += perft(temp_pos, depth - 1);
+    }
+
+    return result;
+}
+
+test "perft" {
+    const pos = Position.start();
+
+    try t.expectEqual(20, perft(pos, 1));
+    try t.expectEqual(400, perft(pos, 2));
+    try t.expectEqual(8902, perft(pos, 3));
+    try t.expectEqual(197281, perft(pos, 4));
+    // try t.expectEqual(4865609, perft(pos, 5)); // e.p.
+    // try t.expectEqual(119060324, perft(pos, 6));
+    // try t.expectEqual(3195901860, perft(pos, 7));
+}
+
 pub const Game = struct {
     position: Position,
 
