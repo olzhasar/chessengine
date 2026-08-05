@@ -419,7 +419,7 @@ const Position = struct {
                         },
                         .Black => {
                             old_rook_square = Square.at("h8");
-                            new_rook_square = Square.at("h8");
+                            new_rook_square = Square.at("f8");
                         },
                     }
                 },
@@ -655,14 +655,14 @@ test "parse_move" {
     try t.expectEqual(Piece.Queen, move.promotion_piece);
 }
 
-fn getAttacksPawn(from: Square, side: Color, occupied: Bitboard) Bitboard {
+fn getAttacksPawn(from: Square, side: Color) Bitboard {
     var result: Bitboard = 0;
 
     const left = if (side == .White) from.rel(-1, 1) else from.rel(1, -1);
-    if (left != null and left.?.mask() & occupied != 0) result |= left.?.mask();
+    if (left != null) result |= left.?.mask();
 
     const right = if (side == .White) from.rel(1, 1) else from.rel(-1, -1);
-    if (right != null and right.?.mask() & occupied != 0) result |= right.?.mask();
+    if (right != null) result |= right.?.mask();
 
     return result;
 }
@@ -770,7 +770,7 @@ fn getAttacksKing(from: Square) Bitboard {
 
 fn getAttacks(piece: Piece, side: Color, from: Square, occupied: Bitboard) Bitboard {
     return switch (piece) {
-        Piece.Pawn => getAttacksPawn(from, side, occupied),
+        Piece.Pawn => getAttacksPawn(from, side),
         Piece.Knight => getAttacksKnight(from),
         Piece.Bishop => getAttacksBishop(from, occupied),
         Piece.Rook => getAttacksRook(from, occupied),
@@ -854,10 +854,11 @@ fn getCastleMoves(from: Square, side: Color, pos: *const Position, occupied: Bit
     }
 }
 
-fn getMoveSquares(piece: Piece, from: Square, pos: *const Position, occupied: Bitboard) Bitboard {
-    var squares = getAttacks(piece, pos.side_to_move, from, occupied);
+fn getMoveSquares(piece: Piece, from: Square, pos: *const Position, occupied: Bitboard, occupied_self: Bitboard, occupied_enemy: Bitboard) Bitboard {
+    var squares = getAttacks(piece, pos.side_to_move, from, occupied) & ~occupied_self;
 
     if (piece == .Pawn) {
+        squares &= occupied_enemy;
         squares |= getPawnPushes(from, pos.side_to_move, occupied);
     }
 
@@ -881,7 +882,9 @@ fn findMovesFrom(
     const occupied_self = pos.occupiedBy(pos.side_to_move);
     const occupied_enemy = pos.occupiedBy(pos.side_enemy());
 
-    var squares = getMoveSquares(piece, from, pos, occupied);
+    var squares = getMoveSquares(piece, from, pos, occupied, occupied_self, occupied_enemy);
+    if (piece == .Pawn) getEnPassantMoves(from, pos.side_to_move, pos, out);
+    if (piece == .King) getCastleMoves(from, pos.side_to_move, pos, occupied, out);
 
     while (squares != 0) : (squares &= squares - 1) {
         const idx = @ctz(squares);
@@ -889,18 +892,12 @@ fn findMovesFrom(
         const target = Square.get(idx);
         const mask = target.mask();
 
-        if (mask & occupied_self != 0) continue;
-
-        if (piece == .Pawn) {
-            getEnPassantMoves(from, pos.side_to_move, pos, out);
-
-            if (target.file() == from.file() and (target.rank() == 7 or target.rank() == 0)) {
-                inline for (PromotionPieces) |prom_piece| {
-                    appendMoveIfLegal(.{ .from = from, .to = target, .move_type = .PROMOTION, .promotion_piece = prom_piece }, pos, out);
-                }
-                continue;
+        if (piece == .Pawn and target.file() == from.file() and (target.rank() == 7 or target.rank() == 0)) {
+            inline for (PromotionPieces) |prom_piece| {
+                appendMoveIfLegal(.{ .from = from, .to = target, .move_type = .PROMOTION, .promotion_piece = prom_piece }, pos, out);
             }
-        } else if (piece == .King) getCastleMoves(from, pos.side_to_move, pos, occupied, out);
+            continue;
+        }
 
         const move_type: MoveType = if (mask & occupied_enemy == 0) .NORMAL else .CAPTURE;
         appendMoveIfLegal(.{ .from = from, .to = target, .move_type = move_type }, pos, out);
@@ -1270,7 +1267,7 @@ test "castle_king_path_in_check" {
 }
 
 fn findAllMoves(pos: *const Position, out: *MoveList) void {
-    for (std.enums.values(Piece)) |piece| {
+    inline for (std.enums.values(Piece)) |piece| {
         var placements = pos.piece_boards[pos.side_to_move.idx()][piece.idx()];
 
         while (placements != 0) : (placements &= placements - 1) {
