@@ -11,6 +11,7 @@ inline fn idx_to_bitboard(idx: u8) Bitboard {
 
 const GameError = error{
     InvalidMove,
+    InvalidFEN,
 };
 
 fn print_bitboard(board: Bitboard) void {
@@ -534,6 +535,83 @@ const Position = struct {
 
         return null;
     }
+
+    fn fromFEN(input: []const u8) !Position {
+        var pos = Position.init(.White);
+
+        var rank: u8 = 7;
+        var idx: u8 = 0;
+
+        var i: u8 = 0;
+        while (i < input.len) : (i += 1) {
+            const char = input[i];
+            if (char >= '1' and char <= '9') {
+                idx += char - '1' + 1;
+                continue;
+            }
+
+            if (char == '/') {
+                if (rank == 0) break;
+                rank -= 1;
+                continue;
+            }
+
+            const square = Square.get(rank * 8 + (idx % 8));
+
+            var color: Color = undefined;
+
+            if (char >= 'b' and char <= 'r') {
+                color = .Black;
+            } else if (char >= 'B' and char <= 'R') {
+                color = .White;
+            } else {
+                std.debug.print("i: {}, idx: {}, char: {c}\n", .{ i, idx, char });
+                return GameError.InvalidFEN;
+            }
+
+            const piece: Piece = switch (char) {
+                'p', 'P' => .Pawn,
+                'b', 'B' => .Bishop,
+                'k', 'K' => .King,
+                'n', 'N' => .Knight,
+                'r', 'R' => .Rook,
+                'q', 'Q' => .Queen,
+                else => return GameError.InvalidFEN,
+            };
+
+            pos.piece_boards[color.idx()][piece.idx()] |= square.mask();
+            idx += 1;
+            if (idx >= 64) break;
+        }
+
+        // side to move
+
+        i += 2;
+
+        pos.side_to_move = switch (input[i]) {
+            'w' => .White,
+            'b' => .Black,
+            else => return GameError.InvalidFEN,
+        };
+
+        i += 2;
+
+        pos.castling_rights = .{ .{ .long = false, .short = false }, .{ .long = false, .short = false } };
+
+        while (i < input.len) : (i += 1) {
+            switch (input[i]) {
+                'k' => pos.castling_rights[Color.Black.idx()].short = true,
+                'q' => pos.castling_rights[Color.Black.idx()].long = true,
+                'K' => pos.castling_rights[Color.White.idx()].short = true,
+                'Q' => pos.castling_rights[Color.White.idx()].long = true,
+                else => break,
+            }
+        }
+
+        return pos;
+
+        // TODO moves counters
+    }
 };
 
 test "position_apply" {
@@ -653,6 +731,17 @@ test "parse_move" {
     try t.expectEqualStrings("b8", &move.to.str());
     try t.expectEqual(MoveType.PROMOTION, move.move_type);
     try t.expectEqual(Piece.Queen, move.promotion_piece);
+}
+
+test "from_fen" {
+    const pos = try Position.fromFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    const start = Position.start();
+
+    for (0..2) |ci| {
+        for (std.enums.values(Piece)) |piece| {
+            try t.expectEqual(start.piece_boards[ci][piece.idx()], pos.piece_boards[ci][piece.idx()]);
+        }
+    }
 }
 
 fn getAttacksPawn(from: Square, side: Color) Bitboard {
@@ -1450,6 +1539,15 @@ test "perft" {
     // try t.expectEqual(4865609, perft(pos, 5)); // e.p.
     // try t.expectEqual(119060324, perft(pos, 6));
     // try t.expectEqual(3195901860, perft(pos, 7));
+}
+
+test "perft_2" {
+    const pos = try Position.fromFEN("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - ");
+
+    try t.expectEqual(48, perft(pos, 1));
+    try t.expectEqual(2039, perft(pos, 2));
+    try t.expectEqual(97862, perft(pos, 3));
+    // try t.expectEqual(4085603, perft(pos, 4));
 }
 
 pub const Game = struct {
