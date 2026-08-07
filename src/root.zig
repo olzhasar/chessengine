@@ -1030,7 +1030,9 @@ fn getEnPassantMoves(from: Square, side: Color, pos: *const Position, out: *Move
         if (target == null) continue;
 
         if (target.?.mask() & pos.en_passant_targets != 0) {
-            out.append(from, target.?, .CAPTURE);
+            const temp_pos = pos.*;
+            const move = Move{ .from = from, .to = target.?, .move_type = .CAPTURE };
+            appendMoveIfLegal(move, &temp_pos, out);
         }
     }
 
@@ -1695,6 +1697,19 @@ test "perft_2" {
     try t.expectEqual(2039, perft(pos, 2));
     try t.expectEqual(97862, perft(pos, 3));
     // try t.expectEqual(4085603, perft(pos, 4));
+}
+
+test "perft_3" {
+    const pos = try Position.fromFEN("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1");
+
+    try t.expectEqual(14, perft(pos, 1));
+    try t.expectEqual(191, perft(pos, 2));
+    try t.expectEqual(2812, perft(pos, 3));
+    try t.expectEqual(43238, perft(pos, 4));
+    // try t.expectEqual(674624, perft(pos, 5));
+    // try t.expectEqual(11030083, perft(pos, 6));
+    // try t.expectEqual(178633661, perft(pos, 7));
+    // try t.expectEqual(3009794393, perft(pos, 8));
 }
 
 pub const Game = struct {
