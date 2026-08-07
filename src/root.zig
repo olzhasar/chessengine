@@ -1091,16 +1091,15 @@ inline fn appendMoveIfLegal(move: Move, pos: *const Position, out: *MoveList) vo
     if (!isInCheck(&pos_copy, pos.side_to_move)) out.append_move(move);
 }
 
-fn findMovesFrom(
+fn findMovesInner(
     piece: Piece,
     from: Square,
     pos: *const Position,
+    occupied: Bitboard,
+    occupied_self: Bitboard,
+    occupied_enemy: Bitboard,
     out: *MoveList,
 ) void {
-    const occupied = pos.occupied();
-    const occupied_self = pos.occupiedBy(pos.side_to_move);
-    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
-
     var squares = getMoveSquares(piece, from, pos, occupied, occupied_self, occupied_enemy);
     if (piece == .Pawn) getEnPassantMoves(from, pos.side_to_move, pos, out);
     if (piece == .King) getCastleMoves(from, pos.side_to_move, pos, occupied, out);
@@ -1124,13 +1123,26 @@ fn findMovesFrom(
     }
 }
 
+fn findMoves(
+    piece: Piece,
+    from: Square,
+    pos: *const Position,
+    out: *MoveList,
+) void {
+    const occupied = pos.occupied();
+    const occupied_self = pos.occupiedBy(pos.side_to_move);
+    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
+
+    return findMovesInner(piece, from, pos, occupied, occupied_self, occupied_enemy, out);
+}
+
 test "pawn_moves" {
     const pos = Position.start();
     const square = Square.at("e2");
 
     var move_list: MoveList = .{};
 
-    findMovesFrom(.Pawn, square, &pos, &move_list);
+    findMoves(.Pawn, square, &pos, &move_list);
     try t.expectEqual(2, move_list.len);
 
     try t.expectEqualStrings(&move_list.moves[0].str(), "e2e3");
@@ -1142,7 +1154,7 @@ test "pawn_step_starting" {
     pos.put(.White, .Pawn, "e2");
 
     var move_list = MoveList{};
-    findMovesFrom(.Pawn, .at("e2"), &pos, &move_list);
+    findMoves(.Pawn, .at("e2"), &pos, &move_list);
 
     try t.expectEqual(2, move_list.len);
 
@@ -1155,7 +1167,7 @@ test "pawn_step_not_starting" {
     pos.put(.White, .Pawn, "e3");
 
     var move_list = MoveList{};
-    findMovesFrom(.Pawn, .at("e3"), &pos, &move_list);
+    findMoves(.Pawn, .at("e3"), &pos, &move_list);
 
     try t.expectEqual(1, move_list.len);
 
@@ -1168,7 +1180,7 @@ test "pawn_step_blocked" {
     pos.put(.Black, .Pawn, "e3");
 
     var move_list = MoveList{};
-    findMovesFrom(.Pawn, .at("e2"), &pos, &move_list);
+    findMoves(.Pawn, .at("e2"), &pos, &move_list);
 
     try t.expectEqual(0, move_list.len);
 }
@@ -1180,7 +1192,7 @@ test "pawn_capture" {
     pos.put(.Black, .Bishop, "f3");
 
     var move_list = MoveList{};
-    findMovesFrom(.Pawn, .at("e2"), &pos, &move_list);
+    findMoves(.Pawn, .at("e2"), &pos, &move_list);
 
     try t.expectEqual(4, move_list.len);
 
@@ -1198,7 +1210,7 @@ test "pawn_capture_2" {
     pos.put(.White, .Queen, "c4");
 
     var move_list = MoveList{};
-    findMovesFrom(.Pawn, .at("d5"), &pos, &move_list);
+    findMoves(.Pawn, .at("d5"), &pos, &move_list);
 
     try t.expectEqual(1, move_list.len);
 
@@ -1212,7 +1224,7 @@ test "pawn_promotions" {
 
     var move_list = MoveList{};
 
-    findMovesFrom(.Pawn, .at("e7"), &pos, &move_list);
+    findMoves(.Pawn, .at("e7"), &pos, &move_list);
 
     try t.expectEqual(4, move_list.len);
 
@@ -1238,7 +1250,7 @@ test "pawn_en_passant" {
 
     var move_list = MoveList{};
 
-    findMovesFrom(.Pawn, .at("d4"), &pos, &move_list);
+    findMoves(.Pawn, .at("d4"), &pos, &move_list);
 
     try t.expectEqual(2, move_list.len);
     try t.expect(move_list.has("d4e3", .CAPTURE));
@@ -1246,7 +1258,7 @@ test "pawn_en_passant" {
     try pos.go("f7f5");
 
     move_list.reset();
-    findMovesFrom(.Pawn, .at("e5"), &pos, &move_list);
+    findMoves(.Pawn, .at("e5"), &pos, &move_list);
 
     try t.expectEqual(2, move_list.len);
     try t.expect(move_list.has("e5f6", .CAPTURE));
@@ -1257,7 +1269,7 @@ test "knight" {
     pos.put(.White, .Knight, "e4");
 
     var move_list = MoveList{};
-    findMovesFrom(.Knight, .at("e4"), &pos, &move_list);
+    findMoves(.Knight, .at("e4"), &pos, &move_list);
 
     try t.expectEqual(8, move_list.len);
 
@@ -1281,7 +1293,7 @@ test "knight_2" {
     pos.put(.Black, .Bishop, "f6");
 
     var move_list = MoveList{};
-    findMovesFrom(.Knight, .at("g4"), &pos, &move_list);
+    findMoves(.Knight, .at("g4"), &pos, &move_list);
 
     try t.expectEqual(4, move_list.len);
 
@@ -1296,7 +1308,7 @@ test "bishop" {
     pos.put(.White, .Bishop, "e4");
 
     var move_list = MoveList{};
-    findMovesFrom(.Bishop, .at("e4"), &pos, &move_list);
+    findMoves(.Bishop, .at("e4"), &pos, &move_list);
 
     try t.expectEqual(13, move_list.len);
 
@@ -1323,7 +1335,7 @@ test "bishop_2" {
     pos.put(.White, .Rook, "h1");
 
     var move_list = MoveList{};
-    findMovesFrom(.Bishop, .at("g2"), &pos, &move_list);
+    findMoves(.Bishop, .at("g2"), &pos, &move_list);
 
     try t.expectEqual(3, move_list.len);
 
@@ -1337,7 +1349,7 @@ test "rook" {
     pos.put(.White, .Rook, "e4");
 
     var move_list = MoveList{};
-    findMovesFrom(.Rook, .at("e4"), &pos, &move_list);
+    findMoves(.Rook, .at("e4"), &pos, &move_list);
 
     try t.expectEqual(14, move_list.len);
 
@@ -1365,7 +1377,7 @@ test "rook_2" {
     pos.put(.White, .Pawn, "f2");
 
     var move_list = MoveList{};
-    findMovesFrom(.Rook, .at("g2"), &pos, &move_list);
+    findMoves(.Rook, .at("g2"), &pos, &move_list);
 
     try t.expectEqual(3, move_list.len);
 
@@ -1384,7 +1396,7 @@ test "queen" {
     pos.put(.White, .King, "e1");
 
     var move_list = MoveList{};
-    findMovesFrom(.Queen, .at("d1"), &pos, &move_list);
+    findMoves(.Queen, .at("d1"), &pos, &move_list);
 
     try t.expectEqual(6, move_list.len);
 }
@@ -1394,7 +1406,7 @@ test "king" {
     pos.put(.White, .King, "e4");
 
     var move_list = MoveList{};
-    findMovesFrom(.King, .at("e4"), &pos, &move_list);
+    findMoves(.King, .at("e4"), &pos, &move_list);
 
     try t.expectEqual(8, move_list.len);
 
@@ -1418,7 +1430,7 @@ test "king_2" {
     pos.put(.Black, .Pawn, "d2");
 
     var move_list = MoveList{};
-    findMovesFrom(.King, .at("e1"), &pos, &move_list);
+    findMoves(.King, .at("e1"), &pos, &move_list);
 
     try t.expectEqual(3, move_list.len);
 
@@ -1437,7 +1449,7 @@ test "castle_short" {
     pos.put(.White, .Queen, "d1");
 
     var move_list = MoveList{};
-    findMovesFrom(.King, .at("e1"), &pos, &move_list);
+    findMoves(.King, .at("e1"), &pos, &move_list);
 
     try t.expect(move_list.has("e1g1", .CASTLE));
     try t.expect(!move_list.has("e1c1", .CASTLE));
@@ -1449,7 +1461,7 @@ test "castle_long_short" {
     pos.put(.Black, .Rook, "a8");
 
     var move_list = MoveList{};
-    findMovesFrom(.King, .at("e8"), &pos, &move_list);
+    findMoves(.King, .at("e8"), &pos, &move_list);
 
     try t.expect(move_list.has("e8c8", .CASTLE));
     try t.expect(move_list.has("e8g8", .CASTLE));
@@ -1464,7 +1476,7 @@ test "castle_king_in_check" {
     pos.put(.Black, .Rook, "e8");
 
     var move_list = MoveList{};
-    findMovesFrom(.King, .at("e1"), &pos, &move_list);
+    findMoves(.King, .at("e1"), &pos, &move_list);
 
     try t.expect(!move_list.has("e1c1", .CASTLE));
     try t.expect(!move_list.has("e1g1", .CASTLE));
@@ -1480,20 +1492,24 @@ test "castle_king_path_in_check" {
     pos.put(.Black, .Rook, "g8");
 
     var move_list = MoveList{};
-    findMovesFrom(.King, .at("e1"), &pos, &move_list);
+    findMoves(.King, .at("e1"), &pos, &move_list);
 
     try t.expect(!move_list.has("e1g1", .CASTLE));
     try t.expect(move_list.has("e1c1", .CASTLE));
 }
 
 fn findAllMoves(pos: *const Position, out: *MoveList) void {
+    const occupied = pos.occupied();
+    const occupied_self = pos.occupiedBy(pos.side_to_move);
+    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
+
     inline for (std.enums.values(Piece)) |piece| {
         var placements = pos.piece_boards[pos.side_to_move.idx()][piece.idx()];
 
         while (placements != 0) : (placements &= placements - 1) {
             const idx = @ctz(placements);
 
-            findMovesFrom(piece, .get(idx), pos, out);
+            findMovesInner(piece, .get(idx), pos, occupied, occupied_self, occupied_enemy, out);
         }
     }
 }
