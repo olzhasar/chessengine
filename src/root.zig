@@ -132,11 +132,6 @@ test "square_from_addr" {
     }
 }
 
-const SquareContent = struct {
-    piece: ?Piece,
-    color: ?Color,
-};
-
 const Piece = enum(u3) {
     Pawn,
     Knight,
@@ -424,6 +419,7 @@ const Position = struct {
 
                     assert(self.piece_boards[self.side_enemy().idx()][Piece.Pawn.idx()] & pawn_to_capture.?.mask() != 0);
                     self.piece_boards[self.side_enemy().idx()][Piece.Pawn.idx()] ^= pawn_to_capture.?.mask();
+                    captured_piece = .Pawn;
                 } else unreachable;
 
                 if (captured_piece == .Rook) {
@@ -573,21 +569,6 @@ const Position = struct {
         for (0..2) |ci| {
             for (std.enums.values(Piece)) |piece| {
                 if (self.piece_boards[ci][piece.idx()] & square.mask() != 0) return piece;
-            }
-        }
-
-        return null;
-    }
-
-    fn getSquareContent(self: *const Position, square: Square) ?SquareContent {
-        var content: SquareContent = undefined;
-
-        for (std.enums.values(Color)) |color| {
-            for (std.enums.values(Piece)) |piece| {
-                if (self.piece_boards[color.idx()][piece.idx()] & square.mask() != 0) {
-                    content.piece = piece;
-                    content.color = color;
-                }
             }
         }
 
@@ -1115,7 +1096,8 @@ fn findMovesInner(
         if (piece == .Pawn) {
             if ((pos.side_to_move == .White and target.rank() == 7) or (pos.side_to_move == .Black and target.rank() == 0)) {
                 inline for (PromotionPieces) |prom_piece| {
-                    appendMoveIfLegal(.{ .from = from, .to = target, .promotion_piece = prom_piece }, pos, out);
+                    const move_type: MoveType = if (occupied_enemy & target.mask() != 0) .CAPTURE else .NORMAL;
+                    appendMoveIfLegal(.{ .from = from, .to = target, .promotion_piece = prom_piece, .move_type = move_type }, pos, out);
                 }
                 continue;
             }
@@ -1710,6 +1692,27 @@ test "perft_3" {
     // try t.expectEqual(11030083, perft(pos, 6));
     // try t.expectEqual(178633661, perft(pos, 7));
     // try t.expectEqual(3009794393, perft(pos, 8));
+}
+
+test "perft_4" {
+    const pos = try Position.fromFEN("r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1");
+
+    try t.expectEqual(6, perft(pos, 1));
+    try t.expectEqual(264, perft(pos, 2));
+    try t.expectEqual(9467, perft(pos, 3));
+    try t.expectEqual(422333, perft(pos, 4));
+    // try t.expectEqual(15833292, perft(pos, 5));
+    // try t.expectEqual(706045033, perft(pos, 6));
+}
+
+test "perft_5" {
+    const pos = try Position.fromFEN("rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8");
+
+    try t.expectEqual(44, perft(pos, 1));
+    try t.expectEqual(1486, perft(pos, 2));
+    try t.expectEqual(62379, perft(pos, 3));
+    // try t.expectEqual(2103487, perft(pos, 4));
+    // try t.expectEqual(89941194, perft(pos, 4));
 }
 
 pub const Game = struct {
