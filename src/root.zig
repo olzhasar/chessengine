@@ -14,6 +14,94 @@ const GameError = error{
     InvalidFEN,
 };
 
+fn precomputeAttacksKnight() [64]Bitboard {
+    @setEvalBranchQuota(3000);
+
+    var result: [64]Bitboard = @splat(0);
+
+    const directions = [_]struct { x: i8, y: i8 }{
+        .{ .x = -1, .y = 2 },
+        .{ .x = 1, .y = 2 },
+        .{ .x = -1, .y = -2 },
+        .{ .x = 1, .y = -2 },
+        .{ .x = -2, .y = 1 },
+        .{ .x = -2, .y = -1 },
+        .{ .x = 2, .y = 1 },
+        .{ .x = 2, .y = -1 },
+    };
+
+    for (0..64) |idx| {
+        const from = Square.get(idx);
+
+        for (&directions) |dir| {
+            const target = from.rel(dir.x, dir.y);
+            if (target != null) result[idx] |= target.?.mask();
+        }
+    }
+
+    return result;
+}
+
+fn precomputeAttacksKing() [64]Bitboard {
+    @setEvalBranchQuota(4000);
+
+    var result: [64]Bitboard = @splat(0);
+
+    const directions = [_]struct { x: i8, y: i8 }{
+        .{ .x = 1, .y = 0 },
+        .{ .x = -1, .y = 0 },
+        .{ .x = 0, .y = 1 },
+        .{ .x = 0, .y = -1 },
+        .{ .x = 1, .y = -1 },
+        .{ .x = 1, .y = 1 },
+        .{ .x = -1, .y = 1 },
+        .{ .x = -1, .y = -1 },
+    };
+
+    for (0..64) |idx| {
+        const from = Square.get(idx);
+
+        for (&directions) |dir| {
+            const target = from.rel(dir.x, dir.y);
+            if (target != null) result[idx] |= target.?.mask();
+        }
+    }
+
+    return result;
+}
+
+fn precomputeAttacksPawn() [2][64]Bitboard {
+    @setEvalBranchQuota(4000);
+    var result: [2][64]Bitboard = .{ @splat(0), @splat(0) };
+
+    // WHITE
+    for (0..64) |idx| {
+        const from = Square.get(idx);
+
+        const left = from.rel(-1, 1);
+        if (left != null) result[Color.White.idx()][idx] |= left.?.mask();
+
+        const right = from.rel(1, 1);
+        if (right != null) result[Color.White.idx()][idx] |= right.?.mask();
+    }
+
+    // BLACK
+    for (0..64) |idx| {
+        const from = Square.get(idx);
+        const left = from.rel(1, -1);
+        if (left != null) result[Color.Black.idx()][idx] |= left.?.mask();
+
+        const right = from.rel(-1, -1);
+        if (right != null) result[Color.Black.idx()][idx] |= right.?.mask();
+    }
+
+    return result;
+}
+
+const ATTACKS_KNIGHT: [64]Bitboard = precomputeAttacksKnight();
+const ATTACKS_KING: [64]Bitboard = precomputeAttacksKing();
+const ATTACKS_PAWN: [2][64]Bitboard = precomputeAttacksPawn();
+
 fn print_bitboard(board: Bitboard) void {
     std.debug.print("-" ** 33, .{});
     std.debug.print("\n", .{});
@@ -350,7 +438,7 @@ const Position = struct {
 
         var piece: Piece = undefined;
 
-        for (std.enums.values(Piece)) |p| {
+        inline for (std.enums.values(Piece)) |p| {
             const bitmask = &self.piece_boards[self.side_to_move.idx()][p.idx()];
 
             if (bitmask.* & from_mask != 0) {
@@ -855,41 +943,15 @@ test "from_fen" {
     }
 }
 
-fn getAttacksPawn(from: Square, side: Color) Bitboard {
-    var result: Bitboard = 0;
-
-    const left = if (side == .White) from.rel(-1, 1) else from.rel(1, -1);
-    if (left != null) result |= left.?.mask();
-
-    const right = if (side == .White) from.rel(1, 1) else from.rel(-1, -1);
-    if (right != null) result |= right.?.mask();
-
-    return result;
+inline fn getAttacksPawn(from: Square, side: Color) Bitboard {
+    return ATTACKS_PAWN[side.idx()][from.idx];
 }
 
-fn getAttacksKnight(from: Square) Bitboard {
-    const directions = [_]struct { x: i8, y: i8 }{
-        .{ .x = -1, .y = 2 },
-        .{ .x = 1, .y = 2 },
-        .{ .x = -1, .y = -2 },
-        .{ .x = 1, .y = -2 },
-        .{ .x = -2, .y = 1 },
-        .{ .x = -2, .y = -1 },
-        .{ .x = 2, .y = 1 },
-        .{ .x = 2, .y = -1 },
-    };
-
-    var result: Bitboard = 0;
-
-    for (&directions) |dir| {
-        const target = from.rel(dir.x, dir.y);
-        if (target != null) result |= target.?.mask();
-    }
-
-    return result;
+inline fn getAttacksKnight(from: Square) Bitboard {
+    return ATTACKS_KNIGHT[from.idx];
 }
 
-fn getAttacksBishop(from: Square, occupied: Bitboard) Bitboard {
+inline fn getAttacksBishop(from: Square, occupied: Bitboard) Bitboard {
     const directions = [_]struct { x: i8, y: i8 }{
         .{ .x = -1, .y = 1 },
         .{ .x = 1, .y = 1 },
@@ -945,30 +1007,10 @@ fn getAttacksQueen(from: Square, occupied: Bitboard) Bitboard {
 }
 
 fn getAttacksKing(from: Square) Bitboard {
-    const directions = [_]struct { x: i8, y: i8 }{
-        .{ .x = 1, .y = 0 },
-        .{ .x = -1, .y = 0 },
-        .{ .x = 0, .y = 1 },
-        .{ .x = 0, .y = -1 },
-        .{ .x = 1, .y = -1 },
-        .{ .x = 1, .y = 1 },
-        .{ .x = -1, .y = 1 },
-        .{ .x = -1, .y = -1 },
-    };
-
-    var result: Bitboard = 0;
-
-    for (&directions) |*dir| {
-        const target = from.rel(dir.x, dir.y);
-        if (target != null) {
-            result |= target.?.mask();
-        }
-    }
-
-    return result;
+    return ATTACKS_KING[from.idx];
 }
 
-fn getAttacks(piece: Piece, side: Color, from: Square, occupied: Bitboard) Bitboard {
+inline fn getAttacks(piece: Piece, side: Color, from: Square, occupied: Bitboard) Bitboard {
     return switch (piece) {
         Piece.Pawn => getAttacksPawn(from, side),
         Piece.Knight => getAttacksKnight(from),
@@ -1667,7 +1709,7 @@ test "perft" {
     try t.expectEqual(400, perft(pos, 2));
     try t.expectEqual(8902, perft(pos, 3));
     try t.expectEqual(197281, perft(pos, 4));
-    // try t.expectEqual(4865609, perft(pos, 5)); // e.p.
+    try t.expectEqual(4865609, perft(pos, 5)); // e.p.
     // try t.expectEqual(119060324, perft(pos, 6));
     // try t.expectEqual(3195901860, perft(pos, 7));
 }
