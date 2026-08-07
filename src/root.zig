@@ -182,7 +182,6 @@ const MoveType = enum {
     NORMAL,
     CAPTURE,
     CASTLE,
-    PROMOTION,
 };
 
 const Move = struct {
@@ -323,7 +322,6 @@ const Position = struct {
             move.move_type = .CAPTURE;
         } else if (piece == .Pawn and move.to.rank() == self.side_to_move.end_rank()) {
             if (input.len != 5) return GameError.InvalidMove;
-            move.move_type = .PROMOTION;
             move.promotion_piece = switch (input[4]) {
                 'q' => .Queen,
                 'r' => .Rook,
@@ -362,7 +360,7 @@ const Position = struct {
 
             if (bitmask.* & from_mask != 0) {
                 bitmask.* ^= from_mask;
-                if (move.move_type != .PROMOTION) bitmask.* |= to_mask;
+                if (move.promotion_piece == null) bitmask.* |= to_mask;
                 piece = p;
 
                 break;
@@ -487,10 +485,11 @@ const Position = struct {
                 self.castling_rights[self.side_to_move.idx()].long = false;
                 self.castling_rights[self.side_to_move.idx()].short = false;
             },
-            .PROMOTION => {
-                self.piece_boards[self.side_to_move.idx()][move.promotion_piece.?.idx()] |= to_mask;
-            },
             .NORMAL => {},
+        }
+
+        if (move.promotion_piece != null) {
+            self.piece_boards[self.side_to_move.idx()][move.promotion_piece.?.idx()] |= to_mask;
         }
 
         self.switchSide();
@@ -857,7 +856,6 @@ test "parse_move" {
 
     try t.expectEqualStrings("b7", &move.from.str());
     try t.expectEqualStrings("b8", &move.to.str());
-    try t.expectEqual(MoveType.PROMOTION, move.move_type);
     try t.expectEqual(Piece.Queen, move.promotion_piece);
 }
 
@@ -1109,13 +1107,14 @@ fn findMovesFrom(
         const target = Square.get(idx);
         const mask = target.mask();
 
-        if (piece == .Pawn and target.file() == from.file() and (target.rank() == 7 or target.rank() == 0)) {
-            inline for (PromotionPieces) |prom_piece| {
-                appendMoveIfLegal(.{ .from = from, .to = target, .move_type = .PROMOTION, .promotion_piece = prom_piece }, pos, out);
+        if (piece == .Pawn) {
+            if ((pos.side_to_move == .White and target.rank() == 7) or (pos.side_to_move == .Black and target.rank() == 0)) {
+                inline for (PromotionPieces) |prom_piece| {
+                    appendMoveIfLegal(.{ .from = from, .to = target, .promotion_piece = prom_piece }, pos, out);
+                }
+                continue;
             }
-            continue;
         }
-
         const move_type: MoveType = if (mask & occupied_enemy == 0) .NORMAL else .CAPTURE;
         appendMoveIfLegal(.{ .from = from, .to = target, .move_type = move_type }, pos, out);
     }
@@ -1215,7 +1214,7 @@ test "pawn_promotions" {
 
     for (0..move_list.len) |i| {
         const move = move_list.moves[i];
-        try t.expectEqual(MoveType.PROMOTION, move.move_type);
+        try t.expect(move.promotion_piece != null);
         try t.expectEqualStrings("e7e8", &move.str());
         try t.expectEqualStrings("e8", &move.to.str());
         try t.expectEqualStrings("e7", &move.from.str());
