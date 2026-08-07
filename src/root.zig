@@ -601,7 +601,7 @@ const Position = struct {
         var idx: u8 = 0;
 
         var i: u8 = 0;
-        while (i < input.len) : (i += 1) {
+        while (i < input.len and idx < 64) : (i += 1) {
             const char = input[i];
             if (char >= '1' and char <= '9') {
                 idx += char - '1' + 1;
@@ -644,12 +644,16 @@ const Position = struct {
 
         // side to move
 
-        i += 2;
+        i += 1;
+        while (input[i] == ' ') i += 1;
 
         pos.side_to_move = switch (input[i]) {
             'w' => .White,
             'b' => .Black,
-            else => return GameError.InvalidFEN,
+            else => {
+                std.debug.print("i: {}, char: {d}\n", .{ i, input[i] });
+                return GameError.InvalidFEN;
+            },
         };
 
         i += 2;
