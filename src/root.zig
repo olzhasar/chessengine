@@ -362,121 +362,135 @@ const Position = struct {
 
             if (bitmask.* & from_mask != 0) {
                 bitmask.* ^= from_mask;
-                bitmask.* |= to_mask;
+                if (move.move_type != .PROMOTION) bitmask.* |= to_mask;
                 piece = p;
 
                 break;
             }
         } else unreachable;
 
-        // en passant
-        if (piece == .Pawn and @abs(@as(i8, move.to.rank()) - @as(i8, move.from.rank())) == 2) {
-            const en_passant_square: ?Square = switch (self.side_to_move) {
-                .White => move.to.rel(0, -1),
-                .Black => move.to.rel(0, 1),
-            };
-
-            self.en_passant_targets |= en_passant_square.?.mask();
-        } else if (piece == .Rook) {
-            switch (self.side_to_move) {
-                .White => {
-                    if (move.from.idx == Square.at("h1").idx) {
-                        self.castling_rights[self.side_to_move.idx()].short = false;
-                    } else if (move.from.idx == Square.at("a1").idx) {
-                        self.castling_rights[self.side_to_move.idx()].long = false;
-                    }
-                },
-                .Black => {
-                    if (move.from.idx == Square.at("h8").idx) {
-                        self.castling_rights[self.side_to_move.idx()].short = false;
-                    } else if (move.from.idx == Square.at("a8").idx) {
-                        self.castling_rights[self.side_to_move.idx()].long = false;
-                    }
-                },
-            }
-        } else if (piece == .King) {
-            self.castling_rights[self.side_to_move.idx()].short = false;
-            self.castling_rights[self.side_to_move.idx()].long = false;
-        }
-
-        if (move.move_type == .CAPTURE) {
-            var captured_piece: Piece = undefined;
-
-            for (std.enums.values(Piece)) |p| {
-                const bitmask = &self.piece_boards[self.side_enemy().idx()][p.idx()];
-                if (bitmask.* & to_mask != 0) {
-                    bitmask.* ^= to_mask;
-                    captured_piece = p;
-                    break;
-                }
-            } else if (self.en_passant_targets & move.to.mask() != 0) {
+        switch (piece) {
+            .Pawn => {
                 // en passant
-                const pawn_to_capture = switch (self.side_to_move) {
-                    .White => move.to.rel(0, -1),
-                    .Black => move.to.rel(0, 1),
-                };
+                if (@abs(@as(i8, move.to.rank()) - @as(i8, move.from.rank())) == 2) {
+                    const en_passant_square: ?Square = switch (self.side_to_move) {
+                        .White => move.to.rel(0, -1),
+                        .Black => move.to.rel(0, 1),
+                    };
 
-                assert(self.piece_boards[self.side_enemy().idx()][Piece.Pawn.idx()] & pawn_to_capture.?.mask() != 0);
-                self.piece_boards[self.side_enemy().idx()][Piece.Pawn.idx()] ^= pawn_to_capture.?.mask();
-            } else unreachable;
-
-            if (captured_piece == .Rook) {
-                switch (self.side_enemy()) {
+                    self.en_passant_targets |= en_passant_square.?.mask();
+                }
+            },
+            .Rook => {
+                switch (self.side_to_move) {
                     .White => {
-                        if (move.to.idx == Square.at("h1").idx) {
-                            self.castling_rights[self.side_enemy().idx()].short = false;
-                        } else if (move.to.idx == Square.at("a1").idx) {
-                            self.castling_rights[self.side_enemy().idx()].long = false;
+                        if (move.from.idx == Square.at("h1").idx) {
+                            self.castling_rights[self.side_to_move.idx()].short = false;
+                        } else if (move.from.idx == Square.at("a1").idx) {
+                            self.castling_rights[self.side_to_move.idx()].long = false;
                         }
                     },
                     .Black => {
-                        if (move.to.idx == Square.at("h8").idx) {
-                            self.castling_rights[self.side_enemy().idx()].short = false;
-                        } else if (move.to.idx == Square.at("a8").idx) {
-                            self.castling_rights[self.side_enemy().idx()].long = false;
+                        if (move.from.idx == Square.at("h8").idx) {
+                            self.castling_rights[self.side_to_move.idx()].short = false;
+                        } else if (move.from.idx == Square.at("a8").idx) {
+                            self.castling_rights[self.side_to_move.idx()].long = false;
                         }
                     },
                 }
-            }
-        } else if (move.move_type == .CASTLE) {
-            var old_rook_square: Square = undefined;
-            var new_rook_square: Square = undefined;
+            },
+            .King => {
+                self.castling_rights[self.side_to_move.idx()].short = false;
+                self.castling_rights[self.side_to_move.idx()].long = false;
+            },
+            else => {},
+        }
 
-            switch (move.to.file()) {
-                // long castle
-                2 => {
-                    switch (self.side_to_move) {
+        switch (move.move_type) {
+            .CAPTURE => {
+                var captured_piece: Piece = undefined;
+
+                for (std.enums.values(Piece)) |p| {
+                    const bitmask = &self.piece_boards[self.side_enemy().idx()][p.idx()];
+                    if (bitmask.* & to_mask != 0) {
+                        bitmask.* ^= to_mask;
+                        captured_piece = p;
+                        break;
+                    }
+                } else if (self.en_passant_targets & move.to.mask() != 0) {
+                    // en passant
+                    const pawn_to_capture = switch (self.side_to_move) {
+                        .White => move.to.rel(0, -1),
+                        .Black => move.to.rel(0, 1),
+                    };
+
+                    assert(self.piece_boards[self.side_enemy().idx()][Piece.Pawn.idx()] & pawn_to_capture.?.mask() != 0);
+                    self.piece_boards[self.side_enemy().idx()][Piece.Pawn.idx()] ^= pawn_to_capture.?.mask();
+                } else unreachable;
+
+                if (captured_piece == .Rook) {
+                    switch (self.side_enemy()) {
                         .White => {
-                            old_rook_square = Square.at("a1");
-                            new_rook_square = Square.at("d1");
+                            if (move.to.idx == Square.at("h1").idx) {
+                                self.castling_rights[self.side_enemy().idx()].short = false;
+                            } else if (move.to.idx == Square.at("a1").idx) {
+                                self.castling_rights[self.side_enemy().idx()].long = false;
+                            }
                         },
                         .Black => {
-                            old_rook_square = Square.at("a8");
-                            new_rook_square = Square.at("d8");
+                            if (move.to.idx == Square.at("h8").idx) {
+                                self.castling_rights[self.side_enemy().idx()].short = false;
+                            } else if (move.to.idx == Square.at("a8").idx) {
+                                self.castling_rights[self.side_enemy().idx()].long = false;
+                            }
                         },
                     }
-                },
-                // short castle
-                6 => {
-                    switch (self.side_to_move) {
-                        .White => {
-                            old_rook_square = Square.at("h1");
-                            new_rook_square = Square.at("f1");
-                        },
-                        .Black => {
-                            old_rook_square = Square.at("h8");
-                            new_rook_square = Square.at("f8");
-                        },
-                    }
-                },
-                else => unreachable,
-            }
+                }
+            },
+            .CASTLE => {
+                var old_rook_square: Square = undefined;
+                var new_rook_square: Square = undefined;
 
-            self.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()] ^= old_rook_square.mask();
-            self.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()] |= new_rook_square.mask();
+                switch (move.to.file()) {
+                    // long castle
+                    2 => {
+                        switch (self.side_to_move) {
+                            .White => {
+                                old_rook_square = Square.at("a1");
+                                new_rook_square = Square.at("d1");
+                            },
+                            .Black => {
+                                old_rook_square = Square.at("a8");
+                                new_rook_square = Square.at("d8");
+                            },
+                        }
+                    },
+                    // short castle
+                    6 => {
+                        switch (self.side_to_move) {
+                            .White => {
+                                old_rook_square = Square.at("h1");
+                                new_rook_square = Square.at("f1");
+                            },
+                            .Black => {
+                                old_rook_square = Square.at("h8");
+                                new_rook_square = Square.at("f8");
+                            },
+                        }
+                    },
+                    else => unreachable,
+                }
 
-            self.castling_rights[self.side_to_move.idx()].long = false;
-            self.castling_rights[self.side_to_move.idx()].short = false;
+                self.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()] ^= old_rook_square.mask();
+                self.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()] |= new_rook_square.mask();
+
+                self.castling_rights[self.side_to_move.idx()].long = false;
+                self.castling_rights[self.side_to_move.idx()].short = false;
+            },
+            .PROMOTION => {
+                self.piece_boards[self.side_to_move.idx()][move.promotion_piece.?.idx()] |= to_mask;
+            },
+            .NORMAL => {},
         }
 
         self.switchSide();
