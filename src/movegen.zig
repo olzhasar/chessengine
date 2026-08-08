@@ -733,3 +733,115 @@ test "skips_moves_exposing_king" {
     try t.expect(!move_list.has("d2d4", .NORMAL));
     try t.expect(!move_list.has("b2b4", .NORMAL));
 }
+
+fn count_pieces_score(piece_boards: [6]Bitboard) i16 {
+    var score: i16 = 0;
+
+    score += @popCount(piece_boards[Piece.Pawn.idx()]);
+    score += @popCount(piece_boards[Piece.Knight.idx()]) * 3;
+    score += @popCount(piece_boards[Piece.Bishop.idx()]) * 3;
+    score += @popCount(piece_boards[Piece.Rook.idx()]) * 5;
+    score += @popCount(piece_boards[Piece.Queen.idx()]) * 9;
+
+    return score;
+}
+
+inline fn static_eval(pos: *const Position) i16 {
+    return count_pieces_score(pos.piece_boards[Color.White.idx()]) - count_pieces_score(pos.piece_boards[Color.Black.idx()]);
+}
+
+fn minimax(pos: *const Position, depth: u8) i16 {
+    var move_list = MoveList{};
+    findAll(pos, &move_list);
+
+    const maximize: bool = (pos.side_to_move == .White);
+
+    if (move_list.len == 0) {
+        if (isInCheck(pos, pos.side_to_move)) {
+            return if (maximize) std.math.minInt(i16) else std.math.maxInt(i16);
+        }
+        return 0;
+    }
+
+    if (depth == 0) {
+        return static_eval(pos);
+    }
+
+    var result: i16 = if (maximize) std.math.minInt(i16) else std.math.maxInt(i16);
+
+    for (0..move_list.len) |i| {
+        var pos_copy = pos.*;
+        pos_copy.apply(move_list.moves[i]);
+
+        const current = minimax(&pos_copy, depth - 1);
+
+        if (maximize) result = @max(result, current) else result = @min(result, current);
+    }
+
+    return result;
+}
+
+test "minimax_static" {
+    var pos = Position.init(.White);
+
+    pos.put(.White, .King, .e1);
+
+    // 3
+    pos.put(.White, .Pawn, .e2);
+    pos.put(.White, .Pawn, .d2);
+    pos.put(.White, .Pawn, .c2);
+
+    // 5 + 3 + 3
+    pos.put(.White, .Rook, .a1);
+    pos.put(.White, .Knight, .b1);
+    pos.put(.White, .Bishop, .c1);
+
+    pos.put(.Black, .King, .e8);
+
+    // 9 + 1
+    pos.put(.Black, .Queen, .d8);
+    pos.put(.Black, .Pawn, .e7);
+
+    try t.expectEqual(4, minimax(&pos, 0));
+}
+
+test "minimax_stalemate" {
+    var pos = Position.init(.Black);
+
+    pos.put(.Black, .King, .h8);
+
+    pos.put(.White, .King, .g6);
+    pos.put(.White, .Queen, .f7);
+
+    try t.expectEqual(0, minimax(&pos, 0));
+    try t.expectEqual(0, minimax(&pos, 1));
+}
+
+test "minimax_checkmate" {
+    const checkmate_score = std.math.maxInt(i16);
+
+    {
+        // checkmate
+        var pos = Position.init(.Black);
+
+        pos.put(.Black, .King, .h8);
+
+        pos.put(.White, .Queen, .g7);
+        pos.put(.White, .King, .f6);
+
+        try t.expectEqual(checkmate_score, minimax(&pos, 0));
+        try t.expectEqual(checkmate_score, minimax(&pos, 1));
+    }
+
+    {
+        // checkmate next move
+        var pos = Position.init(.White);
+
+        pos.put(.Black, .King, .h8);
+
+        pos.put(.White, .Queen, .g1);
+        pos.put(.White, .King, .f6);
+
+        try t.expectEqual(checkmate_score, minimax(&pos, 1));
+    }
+}
