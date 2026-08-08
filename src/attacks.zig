@@ -5,7 +5,7 @@ const Color = board.Color;
 const Piece = board.Piece;
 
 fn precomputeAttacksKnight() [64]Bitboard {
-    @setEvalBranchQuota(3000);
+    @setEvalBranchQuota(5000);
 
     var result: [64]Bitboard = @splat(0);
 
@@ -20,12 +20,12 @@ fn precomputeAttacksKnight() [64]Bitboard {
         .{ .x = 2, .y = -1 },
     };
 
-    for (0..64) |idx| {
-        const from = Square.get(idx);
+    for (0..64) |i| {
+        const from = Square.from_int(i);
 
         for (&directions) |dir| {
             const target = from.rel(dir.x, dir.y);
-            if (target != null) result[idx] |= target.?.mask();
+            if (target != null) result[i] |= target.?.mask();
         }
     }
 
@@ -33,7 +33,7 @@ fn precomputeAttacksKnight() [64]Bitboard {
 }
 
 fn precomputeAttacksKing() [64]Bitboard {
-    @setEvalBranchQuota(4000);
+    @setEvalBranchQuota(5000);
 
     var result: [64]Bitboard = @splat(0);
 
@@ -48,12 +48,12 @@ fn precomputeAttacksKing() [64]Bitboard {
         .{ .x = -1, .y = -1 },
     };
 
-    for (0..64) |idx| {
-        const from = Square.get(idx);
+    for (0..64) |i| {
+        const from = Square.from_int(i);
 
         for (&directions) |dir| {
             const target = from.rel(dir.x, dir.y);
-            if (target != null) result[idx] |= target.?.mask();
+            if (target != null) result[i] |= target.?.mask();
         }
     }
 
@@ -61,28 +61,29 @@ fn precomputeAttacksKing() [64]Bitboard {
 }
 
 fn precomputeAttacksPawn() [2][64]Bitboard {
-    @setEvalBranchQuota(4000);
+    @setEvalBranchQuota(5000);
     var result: [2][64]Bitboard = .{ @splat(0), @splat(0) };
 
     // WHITE
-    for (0..64) |idx| {
-        const from = Square.get(idx);
+    for (0..64) |i| {
+        const from = Square.from_int(i);
 
         const left = from.rel(-1, 1);
-        if (left != null) result[Color.White.idx()][idx] |= left.?.mask();
+        if (left != null) result[Color.White.idx()][i] |= left.?.mask();
 
         const right = from.rel(1, 1);
-        if (right != null) result[Color.White.idx()][idx] |= right.?.mask();
+        if (right != null) result[Color.White.idx()][i] |= right.?.mask();
     }
 
     // BLACK
-    for (0..64) |idx| {
-        const from = Square.get(idx);
+    for (0..64) |i| {
+        const from = Square.from_int(i);
+
         const left = from.rel(1, -1);
-        if (left != null) result[Color.Black.idx()][idx] |= left.?.mask();
+        if (left != null) result[Color.Black.idx()][i] |= left.?.mask();
 
         const right = from.rel(-1, -1);
-        if (right != null) result[Color.Black.idx()][idx] |= right.?.mask();
+        if (right != null) result[Color.Black.idx()][i] |= right.?.mask();
     }
 
     return result;
@@ -93,11 +94,11 @@ const ATTACKS_KING: [64]Bitboard = precomputeAttacksKing();
 const ATTACKS_PAWN: [2][64]Bitboard = precomputeAttacksPawn();
 
 inline fn getAttacksPawn(from: Square, side: Color) Bitboard {
-    return ATTACKS_PAWN[side.idx()][from.idx];
+    return ATTACKS_PAWN[side.idx()][from.as_usize()];
 }
 
 inline fn getAttacksKnight(from: Square) Bitboard {
-    return ATTACKS_KNIGHT[from.idx];
+    return ATTACKS_KNIGHT[from.as_usize()];
 }
 
 inline fn getAttacksBishop(from: Square, occupied: Bitboard) Bitboard {
@@ -205,7 +206,7 @@ fn getAttacksQueen(from: Square, occupied: Bitboard) Bitboard {
 }
 
 fn getAttacksKing(from: Square) Bitboard {
-    return ATTACKS_KING[from.idx];
+    return ATTACKS_KING[from.as_usize()];
 }
 
 pub inline fn getAttacks(piece: Piece, side: Color, from: Square, occupied: Bitboard) Bitboard {

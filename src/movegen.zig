@@ -113,16 +113,16 @@ fn getEnPassantMoves(from: Square, side: Color, pos: *const Position, out: *Move
 }
 
 fn getCastleMoves(from: Square, side: Color, pos: *const Position, occupied: Bitboard, out: *MoveList) void {
-    if (side == .White and from.idx != Square.at("e1").idx) return;
-    if (side == .Black and from.idx != Square.at("e8").idx) return;
+    if (side == .White and from != Square.e1) return;
+    if (side == .Black and from != Square.e8) return;
     if (!pos.castling_rights[side.idx()].long and !pos.castling_rights[side.idx()].short) return;
 
     if (isInCheck(pos, side)) return;
 
     if (pos.castling_rights[side.idx()].short) blk: {
         const squares: [2]Square = switch (side) {
-            .White => [2]Square{ .at("f1"), .at("g1") },
-            .Black => [2]Square{ .at("f8"), .at("g8") },
+            .White => [2]Square{ .f1, .g1 },
+            .Black => [2]Square{ .f8, .g8 },
         };
 
         const mask = squares[0].mask() | squares[1].mask();
@@ -135,8 +135,8 @@ fn getCastleMoves(from: Square, side: Color, pos: *const Position, occupied: Bit
 
     if (pos.castling_rights[side.idx()].long) blk: {
         const squares: [3]Square = switch (side) {
-            .White => [3]Square{ .at("d1"), .at("c1"), .at("b1") },
-            .Black => [3]Square{ .at("d8"), .at("c8"), .at("b8") },
+            .White => [3]Square{ .d1, .c1, .b1 },
+            .Black => [3]Square{ .d8, .c8, .b8 },
         };
 
         const mask = squares[0].mask() | squares[1].mask();
@@ -180,9 +180,8 @@ fn findInner(
     if (piece == .King) getCastleMoves(from, pos.side_to_move, pos, occupied, out);
 
     while (squares != 0) : (squares &= squares - 1) {
-        const idx = @ctz(squares);
+        const target = Square.from_int(@ctz(squares));
 
-        const target = Square.get(idx);
         const mask = target.mask();
 
         if (piece == .Pawn) {
@@ -214,7 +213,7 @@ fn findForPiece(
 
 test "pawn_moves" {
     const pos = Position.start();
-    const square = Square.at("e2");
+    const square = Square.e2;
 
     var move_list: MoveList = .{};
 
@@ -227,10 +226,10 @@ test "pawn_moves" {
 
 test "pawn_step_starting" {
     var pos = Position.init(.White);
-    pos.put(.White, .Pawn, "e2");
+    pos.put(.White, .Pawn, .e2);
 
     var move_list = MoveList{};
-    findForPiece(.Pawn, .at("e2"), &pos, &move_list);
+    findForPiece(.Pawn, .e2, &pos, &move_list);
 
     try t.expectEqual(2, move_list.len);
 
@@ -240,10 +239,10 @@ test "pawn_step_starting" {
 
 test "pawn_step_not_starting" {
     var pos = Position.init(.White);
-    pos.put(.White, .Pawn, "e3");
+    pos.put(.White, .Pawn, .e3);
 
     var move_list = MoveList{};
-    findForPiece(.Pawn, .at("e3"), &pos, &move_list);
+    findForPiece(.Pawn, .e3, &pos, &move_list);
 
     try t.expectEqual(1, move_list.len);
 
@@ -252,23 +251,23 @@ test "pawn_step_not_starting" {
 
 test "pawn_step_blocked" {
     var pos = Position.init(.White);
-    pos.put(.White, .Pawn, "e2");
-    pos.put(.Black, .Pawn, "e3");
+    pos.put(.White, .Pawn, .e2);
+    pos.put(.Black, .Pawn, .e3);
 
     var move_list = MoveList{};
-    findForPiece(.Pawn, .at("e2"), &pos, &move_list);
+    findForPiece(.Pawn, .e2, &pos, &move_list);
 
     try t.expectEqual(0, move_list.len);
 }
 
 test "pawn_capture" {
     var pos = Position.init(.White);
-    pos.put(.White, .Pawn, "e2");
-    pos.put(.Black, .Bishop, "d3");
-    pos.put(.Black, .Bishop, "f3");
+    pos.put(.White, .Pawn, .e2);
+    pos.put(.Black, .Bishop, .d3);
+    pos.put(.Black, .Bishop, .f3);
 
     var move_list = MoveList{};
-    findForPiece(.Pawn, .at("e2"), &pos, &move_list);
+    findForPiece(.Pawn, .e2, &pos, &move_list);
 
     try t.expectEqual(4, move_list.len);
 
@@ -280,13 +279,13 @@ test "pawn_capture" {
 
 test "pawn_capture_2" {
     var pos = Position.init(.Black);
-    pos.put(.Black, .Pawn, "d5");
-    pos.put(.Black, .Bishop, "d4");
-    pos.put(.White, .Bishop, "c6");
-    pos.put(.White, .Queen, "c4");
+    pos.put(.Black, .Pawn, .d5);
+    pos.put(.Black, .Bishop, .d4);
+    pos.put(.White, .Bishop, .c6);
+    pos.put(.White, .Queen, .c4);
 
     var move_list = MoveList{};
-    findForPiece(.Pawn, .at("d5"), &pos, &move_list);
+    findForPiece(.Pawn, .d5, &pos, &move_list);
 
     try t.expectEqual(1, move_list.len);
 
@@ -296,11 +295,11 @@ test "pawn_capture_2" {
 test "pawn_promotions" {
     var pos = Position.init(.White);
 
-    pos.put(.White, .Pawn, "e7");
+    pos.put(.White, .Pawn, .e7);
 
     var move_list = MoveList{};
 
-    findForPiece(.Pawn, .at("e7"), &pos, &move_list);
+    findForPiece(.Pawn, .e7, &pos, &move_list);
 
     try t.expectEqual(4, move_list.len);
 
@@ -316,17 +315,17 @@ test "pawn_promotions" {
 test "pawn_en_passant" {
     var pos = Position.init(.White);
 
-    pos.put(.White, .Pawn, "e2");
-    pos.put(.Black, .Pawn, "d4");
+    pos.put(.White, .Pawn, .e2);
+    pos.put(.Black, .Pawn, .d4);
 
-    pos.put(.White, .Pawn, "e5");
-    pos.put(.Black, .Pawn, "f7");
+    pos.put(.White, .Pawn, .e5);
+    pos.put(.Black, .Pawn, .f7);
 
     try pos.go("e2e4");
 
     var move_list = MoveList{};
 
-    findForPiece(.Pawn, .at("d4"), &pos, &move_list);
+    findForPiece(.Pawn, .d4, &pos, &move_list);
 
     try t.expectEqual(2, move_list.len);
     try t.expect(move_list.has("d4e3", .CAPTURE));
@@ -334,7 +333,7 @@ test "pawn_en_passant" {
     try pos.go("f7f5");
 
     move_list.reset();
-    findForPiece(.Pawn, .at("e5"), &pos, &move_list);
+    findForPiece(.Pawn, .e5, &pos, &move_list);
 
     try t.expectEqual(2, move_list.len);
     try t.expect(move_list.has("e5f6", .CAPTURE));
@@ -342,10 +341,10 @@ test "pawn_en_passant" {
 
 test "knight" {
     var pos = Position.init(.White);
-    pos.put(.White, .Knight, "e4");
+    pos.put(.White, .Knight, .e4);
 
     var move_list = MoveList{};
-    findForPiece(.Knight, .at("e4"), &pos, &move_list);
+    findForPiece(.Knight, .e4, &pos, &move_list);
 
     try t.expectEqual(8, move_list.len);
 
@@ -363,13 +362,13 @@ test "knight" {
 
 test "knight_2" {
     var pos = Position.init(.White);
-    pos.put(.White, .Knight, "g4");
-    pos.put(.White, .Queen, "f2");
-    pos.put(.White, .King, "h2");
-    pos.put(.Black, .Bishop, "f6");
+    pos.put(.White, .Knight, .g4);
+    pos.put(.White, .Queen, .f2);
+    pos.put(.White, .King, .h2);
+    pos.put(.Black, .Bishop, .f6);
 
     var move_list = MoveList{};
-    findForPiece(.Knight, .at("g4"), &pos, &move_list);
+    findForPiece(.Knight, .g4, &pos, &move_list);
 
     try t.expectEqual(4, move_list.len);
 
@@ -381,10 +380,10 @@ test "knight_2" {
 
 test "bishop" {
     var pos = Position.init(.White);
-    pos.put(.White, .Bishop, "e4");
+    pos.put(.White, .Bishop, .e4);
 
     var move_list = MoveList{};
-    findForPiece(.Bishop, .at("e4"), &pos, &move_list);
+    findForPiece(.Bishop, .e4, &pos, &move_list);
 
     try t.expectEqual(13, move_list.len);
 
@@ -405,13 +404,13 @@ test "bishop" {
 
 test "bishop_2" {
     var pos = Position.init(.White);
-    pos.put(.White, .Bishop, "g2");
+    pos.put(.White, .Bishop, .g2);
 
-    pos.put(.Black, .Knight, "f3");
-    pos.put(.White, .Rook, "h1");
+    pos.put(.Black, .Knight, .f3);
+    pos.put(.White, .Rook, .h1);
 
     var move_list = MoveList{};
-    findForPiece(.Bishop, .at("g2"), &pos, &move_list);
+    findForPiece(.Bishop, .g2, &pos, &move_list);
 
     try t.expectEqual(3, move_list.len);
 
@@ -422,10 +421,10 @@ test "bishop_2" {
 
 test "rook" {
     var pos = Position.init(.White);
-    pos.put(.White, .Rook, "e4");
+    pos.put(.White, .Rook, .e4);
 
     var move_list = MoveList{};
-    findForPiece(.Rook, .at("e4"), &pos, &move_list);
+    findForPiece(.Rook, .e4, &pos, &move_list);
 
     try t.expectEqual(14, move_list.len);
 
@@ -447,13 +446,13 @@ test "rook" {
 
 test "rook_2" {
     var pos = Position.init(.White);
-    pos.put(.White, .Rook, "g2");
+    pos.put(.White, .Rook, .g2);
 
-    pos.put(.Black, .Knight, "g3");
-    pos.put(.White, .Pawn, "f2");
+    pos.put(.Black, .Knight, .g3);
+    pos.put(.White, .Pawn, .f2);
 
     var move_list = MoveList{};
-    findForPiece(.Rook, .at("g2"), &pos, &move_list);
+    findForPiece(.Rook, .g2, &pos, &move_list);
 
     try t.expectEqual(3, move_list.len);
 
@@ -464,25 +463,25 @@ test "rook_2" {
 
 test "queen" {
     var pos = Position.init(.White);
-    pos.put(.White, .Queen, "d1");
+    pos.put(.White, .Queen, .d1);
 
-    pos.put(.White, .Pawn, "d3");
-    pos.put(.Black, .Pawn, "c2");
-    pos.put(.White, .Bishop, "c1");
-    pos.put(.White, .King, "e1");
+    pos.put(.White, .Pawn, .d3);
+    pos.put(.Black, .Pawn, .c2);
+    pos.put(.White, .Bishop, .c1);
+    pos.put(.White, .King, .e1);
 
     var move_list = MoveList{};
-    findForPiece(.Queen, .at("d1"), &pos, &move_list);
+    findForPiece(.Queen, .d1, &pos, &move_list);
 
     try t.expectEqual(6, move_list.len);
 }
 
 test "king" {
     var pos = Position.init(.White);
-    pos.put(.White, .King, "e4");
+    pos.put(.White, .King, .e4);
 
     var move_list = MoveList{};
-    findForPiece(.King, .at("e4"), &pos, &move_list);
+    findForPiece(.King, .e4, &pos, &move_list);
 
     try t.expectEqual(8, move_list.len);
 
@@ -498,15 +497,15 @@ test "king" {
 
 test "king_2" {
     var pos = Position.init(.White);
-    pos.put(.White, .King, "e1");
+    pos.put(.White, .King, .e1);
 
-    pos.put(.White, .Queen, "d1");
-    pos.put(.White, .Pawn, "e2");
+    pos.put(.White, .Queen, .d1);
+    pos.put(.White, .Pawn, .e2);
 
-    pos.put(.Black, .Pawn, "d2");
+    pos.put(.Black, .Pawn, .d2);
 
     var move_list = MoveList{};
-    findForPiece(.King, .at("e1"), &pos, &move_list);
+    findForPiece(.King, .e1, &pos, &move_list);
 
     try t.expectEqual(3, move_list.len);
 
@@ -517,15 +516,15 @@ test "king_2" {
 
 test "castle_short" {
     var pos = Position.init(.White);
-    pos.put(.White, .King, "e1");
-    pos.put(.White, .Rook, "h1");
-    pos.put(.White, .Pawn, "e2");
-    pos.put(.White, .Pawn, "d2");
-    pos.put(.White, .Pawn, "f2");
-    pos.put(.White, .Queen, "d1");
+    pos.put(.White, .King, .e1);
+    pos.put(.White, .Rook, .h1);
+    pos.put(.White, .Pawn, .e2);
+    pos.put(.White, .Pawn, .d2);
+    pos.put(.White, .Pawn, .f2);
+    pos.put(.White, .Queen, .d1);
 
     var move_list = MoveList{};
-    findForPiece(.King, .at("e1"), &pos, &move_list);
+    findForPiece(.King, .e1, &pos, &move_list);
 
     try t.expect(move_list.has("e1g1", .CASTLE));
     try t.expect(!move_list.has("e1c1", .CASTLE));
@@ -533,11 +532,11 @@ test "castle_short" {
 
 test "castle_long_short" {
     var pos = Position.init(.Black);
-    pos.put(.Black, .King, "e8");
-    pos.put(.Black, .Rook, "a8");
+    pos.put(.Black, .King, .e8);
+    pos.put(.Black, .Rook, .a8);
 
     var move_list = MoveList{};
-    findForPiece(.King, .at("e8"), &pos, &move_list);
+    findForPiece(.King, .e8, &pos, &move_list);
 
     try t.expect(move_list.has("e8c8", .CASTLE));
     try t.expect(move_list.has("e8g8", .CASTLE));
@@ -545,14 +544,14 @@ test "castle_long_short" {
 
 test "castle_king_in_check" {
     var pos = Position.init(.White);
-    pos.put(.White, .King, "e1");
-    pos.put(.White, .Rook, "a1");
-    pos.put(.White, .Rook, "h1");
+    pos.put(.White, .King, .e1);
+    pos.put(.White, .Rook, .a1);
+    pos.put(.White, .Rook, .h1);
 
-    pos.put(.Black, .Rook, "e8");
+    pos.put(.Black, .Rook, .e8);
 
     var move_list = MoveList{};
-    findForPiece(.King, .at("e1"), &pos, &move_list);
+    findForPiece(.King, .e1, &pos, &move_list);
 
     try t.expect(!move_list.has("e1c1", .CASTLE));
     try t.expect(!move_list.has("e1g1", .CASTLE));
@@ -560,15 +559,15 @@ test "castle_king_in_check" {
 
 test "castle_king_path_in_check" {
     var pos = Position.init(.White);
-    pos.put(.White, .King, "e1");
-    pos.put(.White, .Rook, "a1");
-    pos.put(.White, .Rook, "h1");
+    pos.put(.White, .King, .e1);
+    pos.put(.White, .Rook, .a1);
+    pos.put(.White, .Rook, .h1);
 
-    pos.put(.Black, .Rook, "b8");
-    pos.put(.Black, .Rook, "g8");
+    pos.put(.Black, .Rook, .b8);
+    pos.put(.Black, .Rook, .g8);
 
     var move_list = MoveList{};
-    findForPiece(.King, .at("e1"), &pos, &move_list);
+    findForPiece(.King, .e1, &pos, &move_list);
 
     try t.expect(!move_list.has("e1g1", .CASTLE));
     try t.expect(move_list.has("e1c1", .CASTLE));
@@ -583,9 +582,9 @@ pub fn findAll(pos: *const Position, out: *MoveList) void {
         var placements = pos.piece_boards[pos.side_to_move.idx()][piece.idx()];
 
         while (placements != 0) : (placements &= placements - 1) {
-            const idx = @ctz(placements);
+            const square = Square.from_int(@ctz(placements));
 
-            findInner(piece, .get(idx), pos, occupied, occupied_self, occupied_enemy, out);
+            findInner(piece, square, pos, occupied, occupied_self, occupied_enemy, out);
         }
     }
 }
@@ -608,8 +607,8 @@ test "starting_moves" {
 fn isAttackedBy(area_mask: Bitboard, piece: Piece, attacker: Color, pos: *const Position, occupied: Bitboard) bool {
     var pieces = pos.piece_boards[attacker.idx()][piece.idx()];
     while (pieces != 0) : (pieces &= pieces - 1) {
-        const idx = @ctz(pieces);
-        const attacked = attacks.getAttacks(piece, attacker, .get(idx), occupied);
+        const square = Square.from_int(@ctz(pieces));
+        const attacked = attacks.getAttacks(piece, attacker, square, occupied);
         if (attacked & area_mask != 0) return true;
     }
 
@@ -642,78 +641,78 @@ test "is_check_no" {
 
 test "is_check_pawn" {
     var pos = Position.init(.White);
-    pos.put(.White, .King, "d1");
-    pos.put(.Black, .Pawn, "c2");
+    pos.put(.White, .King, .d1);
+    pos.put(.Black, .Pawn, .c2);
 
     try t.expect(isInCheck(&pos, .White));
 
     pos = Position.init(.Black);
-    pos.put(.Black, .King, "e8");
-    pos.put(.White, .Pawn, "d7");
+    pos.put(.Black, .King, .e8);
+    pos.put(.White, .Pawn, .d7);
 
     try t.expect(isInCheck(&pos, .Black));
 }
 
 test "is_check_knight" {
     var pos = Position.init(.White);
-    pos.put(.White, .King, "d1");
-    pos.put(.Black, .Knight, "e3");
+    pos.put(.White, .King, .d1);
+    pos.put(.Black, .Knight, .e3);
 
     try t.expect(isInCheck(&pos, .White));
 
     pos = Position.init(.Black);
-    pos.put(.Black, .King, "h8");
-    pos.put(.White, .Knight, "g6");
+    pos.put(.Black, .King, .h8);
+    pos.put(.White, .Knight, .g6);
 
     try t.expect(isInCheck(&pos, .Black));
 }
 
 test "is_check_bishop" {
     var pos = Position.init(.White);
-    pos.put(.White, .King, "d1");
-    pos.put(.Black, .Bishop, "a4");
+    pos.put(.White, .King, .d1);
+    pos.put(.Black, .Bishop, .a4);
 
     try t.expect(isInCheck(&pos, .White));
 
     pos = Position.init(.Black);
-    pos.put(.Black, .King, "h8");
-    pos.put(.White, .Bishop, "a1");
+    pos.put(.Black, .King, .h8);
+    pos.put(.White, .Bishop, .a1);
 
     try t.expect(isInCheck(&pos, .Black));
 }
 
 test "is_check_rook" {
     var pos = Position.init(.White);
-    pos.put(.White, .King, "d1");
-    pos.put(.Black, .Rook, "d8");
+    pos.put(.White, .King, .d1);
+    pos.put(.Black, .Rook, .d8);
 
     try t.expect(isInCheck(&pos, .White));
 
     pos = Position.init(.Black);
-    pos.put(.Black, .King, "h8");
-    pos.put(.White, .Rook, "h1");
+    pos.put(.Black, .King, .h8);
+    pos.put(.White, .Rook, .h1);
 
     try t.expect(isInCheck(&pos, .Black));
 }
 
 test "is_check_queen" {
     var pos = Position.init(.White);
-    pos.put(.White, .King, "d1");
-    pos.put(.Black, .Queen, "a4");
+    pos.put(.White, .King, .d1);
+    pos.put(.Black, .Queen, .a4);
 
     try t.expect(isInCheck(&pos, .White));
 
     pos = Position.init(.Black);
-    pos.put(.Black, .King, "h8");
-    pos.put(.White, .Queen, "h1");
+    pos.put(.Black, .King, .h8);
+    pos.put(.White, .Queen, .h1);
 
     try t.expect(isInCheck(&pos, .Black));
 }
 
 test "is_check_king" {
     var pos = Position.init(.White);
-    pos.put(.White, .King, "e4");
-    pos.put(.Black, .King, "d4");
+    pos.put(.White, .King, .e4);
+    pos.put(.Black, .King, .d4);
 
     try t.expect(isInCheck(&pos, .White));
     try t.expect(isInCheck(&pos, .Black));
@@ -722,7 +721,7 @@ test "is_check_king" {
 test "skips_moves_exposing_king" {
     var position = Position.start();
 
-    position.put(.Black, .Bishop, "b4");
+    position.put(.Black, .Bishop, .b4);
 
     var move_list: MoveList = .{};
 

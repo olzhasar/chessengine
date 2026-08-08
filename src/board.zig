@@ -46,27 +46,36 @@ pub const Color = enum(u1) {
 };
 
 // square address 0-63
-pub const Square = struct {
-    idx: u8,
+pub const Square = enum(u8) {
+    // zig fmt: off
+    a1, b1, c1, d1, e1, f1, g1, h1,
+    a2, b2, c2, d2, e2, f2, g2, h2,
+    a3, b3, c3, d3, e3, f3, g3, h3,
+    a4, b4, c4, d4, e4, f4, g4, h4,
+    a5, b5, c5, d5, e5, f5, g5, h5,
+    a6, b6, c6, d6, e6, f6, g6, h6,
+    a7, b7, c7, d7, e7, f7, g7, h7,
+    a8, b8, c8, d8, e8, f8, g8, h8,
+    // zig fmt: on
 
-    pub fn at(addr: *const [2]u8) Square {
-        assert(addr[1] >= '1' and addr[1] <= '8');
-        assert(addr[0] >= 'a' and addr[0] <= 'h');
-
-        return .{ .idx = (addr[1] - '1') * 8 + addr[0] - 'a' };
+    pub fn from_int(val: anytype) Square {
+        return @enumFromInt(val);
     }
 
-    pub fn get(idx: u8) Square {
-        assert(idx >= 0 and idx < 64);
-        return .{ .idx = idx };
+    pub fn as_usize(self: Square) usize {
+        return @as(usize, @intFromEnum(self));
+    }
+
+    pub fn value(self: Square) u8 {
+        return @intFromEnum(self);
     }
 
     pub fn file(self: Square) u3 {
-        return @truncate(self.idx % 8);
+        return @truncate(self.value() % 8);
     }
 
     pub fn rank(self: Square) u3 {
-        return @truncate(self.idx / 8);
+        return @truncate(self.value() / 8);
     }
 
     pub fn file_str(self: Square) u8 {
@@ -92,26 +101,25 @@ pub const Square = struct {
         const target_file: i16 = self.file() + file_shift;
         if (target_file < 0 or target_file > 7) return null;
 
-        return .{ .idx = @as(u8, @intCast(target_rank * 8 + target_file)) };
+        return @enumFromInt(target_rank * 8 + target_file);
     }
 
     // get bitmask for bitwise operations with bitboard
     pub fn mask(self: Square) Bitboard {
-        return idx_to_bitboard(self.idx);
+        return idx_to_bitboard(self.value());
     }
 };
 
-test "square_from_addr" {
-    const cases = [_]struct { input: *const [2]u8, expected: u8 }{
-        .{ .input = "a1", .expected = 0 },
-        .{ .input = "h8", .expected = 63 },
-        .{ .input = "c2", .expected = 10 },
+test "square values" {
+    const cases = [_]struct { square: Square, expected: u8, expected_str: *const [2]u8 }{
+        .{ .square = .a1, .expected = 0, .expected_str = "a1" },
+        .{ .square = .h8, .expected = 63, .expected_str = "h8" },
+        .{ .square = .c2, .expected = 10, .expected_str = "c2" },
     };
 
     for (cases) |case| {
-        const sq: Square = Square.at(case.input);
-        try t.expectEqual(case.expected, sq.idx);
-        try t.expectEqualStrings(case.input, &sq.str());
+        try t.expectEqual(case.expected, case.square.value());
+        try t.expectEqualStrings(case.expected_str, &case.square.str());
     }
 }
 
@@ -206,8 +214,7 @@ pub const Position = struct {
         };
     }
 
-    pub fn put(self: *Position, color: Color, piece: Piece, addr: *const [2]u8) void {
-        const square = Square.at(addr);
+    pub fn put(self: *Position, color: Color, piece: Piece, square: Square) void {
         assert(self.occupied() & square.mask() == 0);
 
         self.piece_boards[color.idx()][piece.idx()] |= square.mask();
@@ -217,24 +224,27 @@ pub const Position = struct {
         const occupied_self = self.occupiedBy(self.side_to_move);
         const occupied_enemy = self.occupiedBy(self.side_enemy());
 
-        var move: Move = .{ .from = .at(input[0..2]), .to = .at(input[2..4]) };
+        if (input.len < 4 or input.len > 5) return GameError.InvalidMove;
+
+        var move: Move = .{
+            .from = std.meta.stringToEnum(Square, input[0..2]) orelse return GameError.InvalidMove,
+            .to = std.meta.stringToEnum(Square, input[2..4]) orelse return GameError.InvalidMove,
+        };
         if (move.from.mask() & occupied_self == 0) return GameError.InvalidMove;
         if (move.to.mask() & occupied_self != 0) return GameError.InvalidMove;
 
-        if (input.len < 4 or input.len > 5) return GameError.InvalidMove;
-
-        const piece = self.getPieceAt(input[0..2]).?;
+        const piece = self.getPieceAt(move.from).?;
         if (piece == .King) {
             if (input.len != 4) return GameError.InvalidMove;
             switch (self.side_to_move) {
                 .White => {
-                    if (move.from.idx == Square.at("e1").idx) {
-                        if (move.to.idx == Square.at("c1").idx or move.to.idx == Square.at("g1").idx) move.move_type = .CASTLE;
+                    if (move.from == Square.e1) {
+                        if (move.to == Square.c1 or move.to == Square.g1) move.move_type = .CASTLE;
                     }
                 },
                 .Black => {
-                    if (move.from.idx == Square.at("e8").idx) {
-                        if (move.to.idx == Square.at("c8").idx or move.to.idx == Square.at("g8").idx) move.move_type = .CASTLE;
+                    if (move.from == Square.e8) {
+                        if (move.to == Square.c8 or move.to == Square.g8) move.move_type = .CASTLE;
                     }
                 },
             }
@@ -303,16 +313,16 @@ pub const Position = struct {
             .Rook => {
                 switch (self.side_to_move) {
                     .White => {
-                        if (move.from.idx == Square.at("h1").idx) {
+                        if (move.from == Square.h1) {
                             self.castling_rights[self.side_to_move.idx()].short = false;
-                        } else if (move.from.idx == Square.at("a1").idx) {
+                        } else if (move.from == Square.a1) {
                             self.castling_rights[self.side_to_move.idx()].long = false;
                         }
                     },
                     .Black => {
-                        if (move.from.idx == Square.at("h8").idx) {
+                        if (move.from == Square.h8) {
                             self.castling_rights[self.side_to_move.idx()].short = false;
-                        } else if (move.from.idx == Square.at("a8").idx) {
+                        } else if (move.from == Square.a8) {
                             self.castling_rights[self.side_to_move.idx()].long = false;
                         }
                     },
@@ -351,16 +361,16 @@ pub const Position = struct {
                 if (captured_piece == .Rook) {
                     switch (self.side_enemy()) {
                         .White => {
-                            if (move.to.idx == Square.at("h1").idx) {
+                            if (move.to == Square.h1) {
                                 self.castling_rights[self.side_enemy().idx()].short = false;
-                            } else if (move.to.idx == Square.at("a1").idx) {
+                            } else if (move.to == Square.a1) {
                                 self.castling_rights[self.side_enemy().idx()].long = false;
                             }
                         },
                         .Black => {
-                            if (move.to.idx == Square.at("h8").idx) {
+                            if (move.to == Square.h8) {
                                 self.castling_rights[self.side_enemy().idx()].short = false;
-                            } else if (move.to.idx == Square.at("a8").idx) {
+                            } else if (move.to == Square.a8) {
                                 self.castling_rights[self.side_enemy().idx()].long = false;
                             }
                         },
@@ -376,12 +386,12 @@ pub const Position = struct {
                     2 => {
                         switch (self.side_to_move) {
                             .White => {
-                                old_rook_square = Square.at("a1");
-                                new_rook_square = Square.at("d1");
+                                old_rook_square = Square.a1;
+                                new_rook_square = Square.d1;
                             },
                             .Black => {
-                                old_rook_square = Square.at("a8");
-                                new_rook_square = Square.at("d8");
+                                old_rook_square = Square.a8;
+                                new_rook_square = Square.d8;
                             },
                         }
                     },
@@ -389,12 +399,12 @@ pub const Position = struct {
                     6 => {
                         switch (self.side_to_move) {
                             .White => {
-                                old_rook_square = Square.at("h1");
-                                new_rook_square = Square.at("f1");
+                                old_rook_square = Square.h1;
+                                new_rook_square = Square.f1;
                             },
                             .Black => {
-                                old_rook_square = Square.at("h8");
-                                new_rook_square = Square.at("f8");
+                                old_rook_square = Square.h8;
+                                new_rook_square = Square.f8;
                             },
                         }
                     },
@@ -485,9 +495,7 @@ pub const Position = struct {
         return result;
     }
 
-    fn getPieceAt(self: *const Position, addr: *const [2]u8) ?Piece {
-        const square = Square.at(addr);
-
+    fn getPieceAt(self: *const Position, square: Square) ?Piece {
         for (0..2) |ci| {
             for (std.enums.values(Piece)) |piece| {
                 if (self.piece_boards[ci][piece.idx()] & square.mask() != 0) return piece;
@@ -517,7 +525,7 @@ pub const Position = struct {
                 continue;
             }
 
-            const square = Square.get(rank * 8 + (idx % 8));
+            const square: Square = @enumFromInt(rank * 8 + (idx % 8));
 
             var color: Color = undefined;
 
@@ -582,7 +590,7 @@ pub const Position = struct {
 test "position_apply" {
     var pos = Position.start();
 
-    const move = Move{ .from = .at("e2"), .to = .at("e4"), .move_type = .NORMAL };
+    const move = Move{ .from = .e2, .to = .e4, .move_type = .NORMAL };
 
     try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask() != 0);
     try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask(), 0);
@@ -596,10 +604,10 @@ test "position_apply" {
 test "position_apply_capture" {
     var pos = Position.init(.White);
 
-    pos.put(.White, .Pawn, "e4");
-    pos.put(.Black, .Pawn, "d5");
+    pos.put(.White, .Pawn, .e4);
+    pos.put(.Black, .Pawn, .d5);
 
-    const move = Move{ .from = .at("e4"), .to = .at("d5"), .move_type = .NORMAL };
+    const move = Move{ .from = .e4, .to = .d5, .move_type = .NORMAL };
 
     try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask() != 0);
     try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask(), 0);
@@ -613,39 +621,39 @@ test "position_apply_capture" {
 test "position_apply_castle" {
     var pos = Position.init(.White);
 
-    pos.put(.White, .King, "e1");
-    pos.put(.White, .Rook, "h1");
+    pos.put(.White, .King, .e1);
+    pos.put(.White, .Rook, .h1);
 
-    const move = Move{ .from = .at("e1"), .to = .at("g1"), .move_type = .CASTLE };
+    const move = Move{ .from = .e1, .to = .g1, .move_type = .CASTLE };
     pos.apply(move);
 
     try t.expect(pos.piece_boards[Color.White.idx()][Piece.King.idx()] & move.to.mask() != 0);
     try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.King.idx()] & move.from.mask(), 0);
 
-    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Rook.idx()] & Square.at("f1").mask() != 0);
-    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Rook.idx()] & Square.at("h1").mask(), 0);
+    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Rook.idx()] & Square.f1.mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Rook.idx()] & Square.h1.mask(), 0);
 }
 
 test "position_apply_en_passant_push" {
     var pos = Position.init(.Black);
 
-    pos.put(.White, .Pawn, "e5");
-    pos.put(.Black, .Pawn, "f7");
+    pos.put(.White, .Pawn, .e5);
+    pos.put(.Black, .Pawn, .f7);
 
     try pos.go("f7f5");
 
-    try t.expect(pos.en_passant_targets & Square.at("f6").mask() != 0);
+    try t.expect(pos.en_passant_targets & Square.f6.mask() != 0);
 }
 
 test "position_apply_en_passant_capture" {
     var pos = Position.init(.White);
 
-    pos.put(.Black, .Pawn, "c4");
-    pos.put(.White, .Pawn, "b2");
-    pos.put(.White, .Pawn, "a2");
+    pos.put(.Black, .Pawn, .c4);
+    pos.put(.White, .Pawn, .b2);
+    pos.put(.White, .Pawn, .a2);
 
-    pos.put(.White, .Pawn, "e5");
-    pos.put(.Black, .Pawn, "f7");
+    pos.put(.White, .Pawn, .e5);
+    pos.put(.Black, .Pawn, .f7);
 
     try pos.go("b2b4");
     try pos.go("c4b3");
@@ -655,8 +663,8 @@ test "position_apply_en_passant_capture" {
     try pos.go("f7f5");
     try pos.go("e5f6");
 
-    try t.expectEqual(Piece.Pawn, pos.getPieceAt("b3"));
-    try t.expectEqual(null, pos.getPieceAt("b4"));
+    try t.expectEqual(Piece.Pawn, pos.getPieceAt(.b3));
+    try t.expectEqual(null, pos.getPieceAt(.b4));
 }
 
 test "position_apply_castling_rights_king_moved" {
@@ -681,13 +689,13 @@ test "position_apply_castling_rights_king_moved" {
 test "position_apply_castling_rights_rook_moved" {
     var pos = Position.init(.White);
 
-    pos.put(.White, .King, "e1");
-    pos.put(.White, .Rook, "a1");
-    pos.put(.White, .Rook, "h1");
+    pos.put(.White, .King, .e1);
+    pos.put(.White, .Rook, .a1);
+    pos.put(.White, .Rook, .h1);
 
-    pos.put(.Black, .King, "e8");
-    pos.put(.Black, .Rook, "a8");
-    pos.put(.Black, .Rook, "h8");
+    pos.put(.Black, .King, .e8);
+    pos.put(.Black, .Rook, .a8);
+    pos.put(.Black, .Rook, .h8);
 
     try pos.go("a1a4");
     try t.expect(!pos.castling_rights[Color.White.idx()].long);
@@ -707,17 +715,17 @@ test "position_apply_castling_rights_rook_moved" {
 test "position_apply_rook_captured" {
     var pos = Position.init(.White);
 
-    pos.put(.White, .King, "e1");
-    pos.put(.White, .Knight, "b1");
-    pos.put(.White, .Knight, "g1");
-    pos.put(.White, .Rook, "a1");
-    pos.put(.White, .Rook, "h1");
+    pos.put(.White, .King, .e1);
+    pos.put(.White, .Knight, .b1);
+    pos.put(.White, .Knight, .g1);
+    pos.put(.White, .Rook, .a1);
+    pos.put(.White, .Rook, .h1);
 
-    pos.put(.Black, .King, "e8");
-    pos.put(.White, .Knight, "b8");
-    pos.put(.White, .Knight, "g8");
-    pos.put(.Black, .Rook, "a8");
-    pos.put(.Black, .Rook, "h8");
+    pos.put(.Black, .King, .e8);
+    pos.put(.White, .Knight, .b8);
+    pos.put(.White, .Knight, .g8);
+    pos.put(.Black, .Rook, .a8);
+    pos.put(.Black, .Rook, .h8);
 
     try pos.go("a1a8");
     try t.expect(!pos.castling_rights[Color.Black.idx()].long);
@@ -731,8 +739,8 @@ test "position_apply_rook_captured" {
 test "parse_move" {
     var pos = Position.init(.White);
 
-    pos.put(.White, .Pawn, "e4");
-    pos.put(.Black, .Pawn, "d5");
+    pos.put(.White, .Pawn, .e4);
+    pos.put(.Black, .Pawn, .d5);
 
     var move: Move = undefined;
     move = try pos.parse_move("e4e5");
@@ -747,9 +755,9 @@ test "parse_move" {
     try t.expectEqualStrings("d5", &move.to.str());
     try t.expectEqual(MoveType.CAPTURE, move.move_type);
 
-    pos.put(.White, .King, "e1");
-    pos.put(.White, .Rook, "a1");
-    pos.put(.White, .Rook, "h1");
+    pos.put(.White, .King, .e1);
+    pos.put(.White, .Rook, .a1);
+    pos.put(.White, .Rook, .h1);
 
     move = try pos.parse_move("e1g1");
 
@@ -757,7 +765,7 @@ test "parse_move" {
     try t.expectEqualStrings("g1", &move.to.str());
     try t.expectEqual(MoveType.CASTLE, move.move_type);
 
-    pos.put(.White, .Pawn, "b7");
+    pos.put(.White, .Pawn, .b7);
 
     move = try pos.parse_move("b7b8q");
 
