@@ -750,7 +750,7 @@ inline fn static_eval(pos: *const Position) i16 {
     return count_pieces_score(pos.piece_boards[Color.White.idx()]) - count_pieces_score(pos.piece_boards[Color.Black.idx()]);
 }
 
-fn minimax(pos: *const Position, depth: u8) i16 {
+fn minimax(pos: *const Position, depth: u8, a: ?i16, b: ?i16) i16 {
     var move_list = MoveList{};
     findAll(pos, &move_list);
 
@@ -767,15 +767,26 @@ fn minimax(pos: *const Position, depth: u8) i16 {
         return static_eval(pos);
     }
 
+    var alpha = a orelse std.math.minInt(i16);
+    var beta = b orelse std.math.maxInt(i16);
+
     var result: i16 = if (maximize) std.math.minInt(i16) else std.math.maxInt(i16);
 
     for (0..move_list.len) |i| {
         var pos_copy = pos.*;
         pos_copy.apply(move_list.moves[i]);
 
-        const current = minimax(&pos_copy, depth - 1);
+        const current = minimax(&pos_copy, depth - 1, alpha, beta);
 
-        if (maximize) result = @max(result, current) else result = @min(result, current);
+        if (maximize) {
+            result = @max(result, current);
+            alpha = @max(alpha, result);
+        } else {
+            result = @min(result, current);
+            beta = @min(beta, result);
+        }
+
+        if (alpha >= beta) break;
     }
 
     return result;
@@ -802,7 +813,7 @@ test "minimax_static" {
     pos.put(.Black, .Queen, .d8);
     pos.put(.Black, .Pawn, .e7);
 
-    try t.expectEqual(4, minimax(&pos, 0));
+    try t.expectEqual(4, minimax(&pos, 0, null, null));
 }
 
 test "minimax_stalemate" {
@@ -813,8 +824,8 @@ test "minimax_stalemate" {
     pos.put(.White, .King, .g6);
     pos.put(.White, .Queen, .f7);
 
-    try t.expectEqual(0, minimax(&pos, 0));
-    try t.expectEqual(0, minimax(&pos, 1));
+    try t.expectEqual(0, minimax(&pos, 0, null, null));
+    try t.expectEqual(0, minimax(&pos, 1, null, null));
 }
 
 test "minimax_checkmate" {
@@ -829,8 +840,8 @@ test "minimax_checkmate" {
         pos.put(.White, .Queen, .g7);
         pos.put(.White, .King, .f6);
 
-        try t.expectEqual(checkmate_score, minimax(&pos, 0));
-        try t.expectEqual(checkmate_score, minimax(&pos, 1));
+        try t.expectEqual(checkmate_score, minimax(&pos, 0, null, null));
+        try t.expectEqual(checkmate_score, minimax(&pos, 1, null, null));
     }
 
     {
@@ -842,7 +853,7 @@ test "minimax_checkmate" {
         pos.put(.White, .Queen, .g1);
         pos.put(.White, .King, .f6);
 
-        try t.expectEqual(checkmate_score, minimax(&pos, 1));
+        try t.expectEqual(checkmate_score, minimax(&pos, 1, null, null));
     }
 }
 
@@ -862,7 +873,7 @@ pub fn findBestMove(pos: *const Position, depth: u8) ?Move {
         var pos_copy = pos.*;
         pos_copy.apply(move_list.moves[i]);
 
-        const current = minimax(&pos_copy, depth - 1);
+        const current = minimax(&pos_copy, depth - 1, null, null);
 
         if (best_move == null or (maximize and current > best_score) or (!maximize and current < best_score)) {
             best_move = move_list.moves[i];
