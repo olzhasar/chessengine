@@ -1,0 +1,795 @@
+const std = @import("std");
+const assert = std.debug.assert;
+const t = std.testing;
+
+const GameError = error{
+    InvalidMove,
+    InvalidFEN,
+};
+
+// LSB (bit 0) - a1, MSB (bit 63) - h8.
+pub const Bitboard = u64;
+
+inline fn idx_to_bitboard(idx: u8) Bitboard {
+    return @as(Bitboard, 1) << @intCast(idx);
+}
+
+pub const Color = enum(u1) {
+    White,
+    Black,
+
+    pub fn idx(self: Color) usize {
+        return @intFromEnum(self);
+    }
+
+    // get the opposite color
+    pub fn opp(self: Color) Color {
+        if (self == .White) return .Black;
+        return .White;
+    }
+
+    pub fn pawn_direction(self: Color) i3 {
+        return if (self == .White) 1 else -1;
+    }
+
+    pub fn start_rank(self: Color) u3 {
+        return if (self == .White) 0 else 7;
+    }
+
+    pub fn end_rank(self: Color) u3 {
+        return if (self == .White) 7 else 0;
+    }
+
+    pub fn symbol(self: Color) u8 {
+        if (self == .White) return 'W' else return 'B';
+    }
+};
+
+// square address 0-63
+pub const Square = struct {
+    idx: u8,
+
+    pub fn at(addr: *const [2]u8) Square {
+        assert(addr[1] >= '1' and addr[1] <= '8');
+        assert(addr[0] >= 'a' and addr[0] <= 'h');
+
+        return .{ .idx = (addr[1] - '1') * 8 + addr[0] - 'a' };
+    }
+
+    pub fn get(idx: u8) Square {
+        assert(idx >= 0 and idx < 64);
+        return .{ .idx = idx };
+    }
+
+    pub fn file(self: Square) u3 {
+        return @truncate(self.idx % 8);
+    }
+
+    pub fn rank(self: Square) u3 {
+        return @truncate(self.idx / 8);
+    }
+
+    pub fn file_str(self: Square) u8 {
+        return @as(u8, 'a') + self.file();
+    }
+
+    pub fn rank_str(self: Square) u8 {
+        return @as(u8, '1') + self.rank();
+    }
+
+    pub fn str(self: Square) [2]u8 {
+        return .{
+            self.file_str(),
+            self.rank_str(),
+        };
+    }
+
+    // locate a square shifted relative to the current one, null if out of bounds
+    pub fn rel(self: Square, file_shift: i8, rank_shift: i8) ?Square {
+        const target_rank: i16 = self.rank() + rank_shift;
+        if (target_rank < 0 or target_rank > 7) return null;
+
+        const target_file: i16 = self.file() + file_shift;
+        if (target_file < 0 or target_file > 7) return null;
+
+        return .{ .idx = @as(u8, @intCast(target_rank * 8 + target_file)) };
+    }
+
+    // get bitmask for bitwise operations with bitboard
+    pub fn mask(self: Square) Bitboard {
+        return idx_to_bitboard(self.idx);
+    }
+};
+
+test "square_from_addr" {
+    const cases = [_]struct { input: *const [2]u8, expected: u8 }{
+        .{ .input = "a1", .expected = 0 },
+        .{ .input = "h8", .expected = 63 },
+        .{ .input = "c2", .expected = 10 },
+    };
+
+    for (cases) |case| {
+        const sq: Square = Square.at(case.input);
+        try t.expectEqual(case.expected, sq.idx);
+        try t.expectEqualStrings(case.input, &sq.str());
+    }
+}
+
+pub const Piece = enum(u3) {
+    Pawn,
+    Knight,
+    Bishop,
+    Rook,
+    Queen,
+    King,
+
+    fn symbol(self: Piece, color: Color) u21 {
+        return switch (color) {
+            .Black => switch (self) {
+                Piece.Pawn => 0x2659,
+                Piece.Knight => 0x2658,
+                Piece.Bishop => 0x2657,
+                Piece.Rook => 0x2656,
+                Piece.Queen => 0x2655,
+                Piece.King => 0x2654,
+            },
+            .White => switch (self) {
+                Piece.Pawn => 0x265F,
+                Piece.Knight => 0x265E,
+                Piece.Bishop => 0x265D,
+                Piece.Rook => 0x265C,
+                Piece.Queen => 0x265B,
+                Piece.King => 0x265A,
+            },
+        };
+    }
+
+    pub fn idx(self: Piece) usize {
+        return @intFromEnum(self);
+    }
+};
+
+pub const PromotionPieces = [_]Piece{
+    Piece.Knight,
+    Piece.Bishop,
+    Piece.Rook,
+    Piece.Queen,
+};
+
+pub const MoveType = enum {
+    NORMAL,
+    CAPTURE,
+    CASTLE,
+};
+
+pub const Move = struct {
+    from: Square,
+    to: Square,
+    move_type: MoveType = .NORMAL,
+    promotion_piece: ?Piece = null,
+
+    pub fn str(self: Move) [4]u8 {
+        return [4]u8{
+            self.from.file_str(),
+            self.from.rank_str(),
+            self.to.file_str(),
+            self.to.rank_str(),
+        };
+    }
+};
+
+pub const CastlingRights = struct {
+    long: bool = true,
+    short: bool = true,
+};
+
+pub const Position = struct {
+    // [color][piece type] bitmasks
+    piece_boards: [2][6]Bitboard,
+    // [piece][short, long]
+    castling_rights: [2]CastlingRights = .{ .{}, .{} },
+    side_to_move: Color,
+    en_passant_targets: Bitboard = 0,
+
+    // the enemy (opposite) of the current side_to_move
+    pub fn side_enemy(self: *const Position) Color {
+        return self.side_to_move.opp();
+    }
+
+    pub fn init(side_to_move: Color) Position {
+        return .{
+            .side_to_move = side_to_move,
+            .piece_boards = .{
+                @splat(0),
+                @splat(0),
+            },
+        };
+    }
+
+    pub fn put(self: *Position, color: Color, piece: Piece, addr: *const [2]u8) void {
+        const square = Square.at(addr);
+        assert(self.occupied() & square.mask() == 0);
+
+        self.piece_boards[color.idx()][piece.idx()] |= square.mask();
+    }
+
+    fn parse_move(self: *Position, input: []const u8) !Move {
+        const occupied_self = self.occupiedBy(self.side_to_move);
+        const occupied_enemy = self.occupiedBy(self.side_enemy());
+
+        var move: Move = .{ .from = .at(input[0..2]), .to = .at(input[2..4]) };
+        if (move.from.mask() & occupied_self == 0) return GameError.InvalidMove;
+        if (move.to.mask() & occupied_self != 0) return GameError.InvalidMove;
+
+        if (input.len < 4 or input.len > 5) return GameError.InvalidMove;
+
+        const piece = self.getPieceAt(input[0..2]).?;
+        if (piece == .King) {
+            if (input.len != 4) return GameError.InvalidMove;
+            switch (self.side_to_move) {
+                .White => {
+                    if (move.from.idx == Square.at("e1").idx) {
+                        if (move.to.idx == Square.at("c1").idx or move.to.idx == Square.at("g1").idx) move.move_type = .CASTLE;
+                    }
+                },
+                .Black => {
+                    if (move.from.idx == Square.at("e8").idx) {
+                        if (move.to.idx == Square.at("c8").idx or move.to.idx == Square.at("g8").idx) move.move_type = .CASTLE;
+                    }
+                },
+            }
+        } else if (move.to.mask() & occupied_enemy != 0 or move.to.mask() & self.en_passant_targets != 0) {
+            if (input.len != 4) return GameError.InvalidMove;
+            move.move_type = .CAPTURE;
+        } else if (piece == .Pawn and move.to.rank() == self.side_to_move.end_rank()) {
+            if (input.len != 5) return GameError.InvalidMove;
+            move.promotion_piece = switch (input[4]) {
+                'q' => .Queen,
+                'r' => .Rook,
+                'b' => .Bishop,
+                'n' => .Knight,
+                else => return GameError.InvalidMove,
+            };
+        } else if (input.len != 4) return GameError.InvalidMove;
+
+        return move;
+    }
+
+    pub fn go(self: *Position, input: []const u8) !void {
+        const move = try self.parse_move(input);
+
+        self.apply(move);
+    }
+
+    fn resetEnPassantTargets(self: *Position, side: Color) void {
+        var mask: u64 = (1 << 32) - 1;
+        if (side == .White) mask = ~mask;
+
+        self.en_passant_targets &= mask;
+    }
+
+    pub fn apply(self: *Position, move: Move) void {
+        const from_mask = move.from.mask();
+        const to_mask = move.to.mask();
+
+        self.resetEnPassantTargets(self.side_to_move);
+
+        var piece: Piece = undefined;
+
+        inline for (std.enums.values(Piece)) |p| {
+            const bitmask = &self.piece_boards[self.side_to_move.idx()][p.idx()];
+
+            if (bitmask.* & from_mask != 0) {
+                bitmask.* ^= from_mask;
+                if (move.promotion_piece == null) bitmask.* |= to_mask;
+                piece = p;
+
+                break;
+            }
+        } else unreachable;
+
+        switch (piece) {
+            .Pawn => {
+                // en passant
+                if (@abs(@as(i8, move.to.rank()) - @as(i8, move.from.rank())) == 2) {
+                    const en_passant_square: ?Square = switch (self.side_to_move) {
+                        .White => move.to.rel(0, -1),
+                        .Black => move.to.rel(0, 1),
+                    };
+
+                    self.en_passant_targets |= en_passant_square.?.mask();
+                }
+            },
+            .Rook => {
+                switch (self.side_to_move) {
+                    .White => {
+                        if (move.from.idx == Square.at("h1").idx) {
+                            self.castling_rights[self.side_to_move.idx()].short = false;
+                        } else if (move.from.idx == Square.at("a1").idx) {
+                            self.castling_rights[self.side_to_move.idx()].long = false;
+                        }
+                    },
+                    .Black => {
+                        if (move.from.idx == Square.at("h8").idx) {
+                            self.castling_rights[self.side_to_move.idx()].short = false;
+                        } else if (move.from.idx == Square.at("a8").idx) {
+                            self.castling_rights[self.side_to_move.idx()].long = false;
+                        }
+                    },
+                }
+            },
+            .King => {
+                self.castling_rights[self.side_to_move.idx()].short = false;
+                self.castling_rights[self.side_to_move.idx()].long = false;
+            },
+            else => {},
+        }
+
+        switch (move.move_type) {
+            .CAPTURE => {
+                var captured_piece: Piece = undefined;
+
+                for (std.enums.values(Piece)) |p| {
+                    const bitmask = &self.piece_boards[self.side_enemy().idx()][p.idx()];
+                    if (bitmask.* & to_mask != 0) {
+                        bitmask.* ^= to_mask;
+                        captured_piece = p;
+                        break;
+                    }
+                } else if (self.en_passant_targets & move.to.mask() != 0) {
+                    // en passant
+                    const pawn_to_capture = switch (self.side_to_move) {
+                        .White => move.to.rel(0, -1),
+                        .Black => move.to.rel(0, 1),
+                    };
+
+                    assert(self.piece_boards[self.side_enemy().idx()][Piece.Pawn.idx()] & pawn_to_capture.?.mask() != 0);
+                    self.piece_boards[self.side_enemy().idx()][Piece.Pawn.idx()] ^= pawn_to_capture.?.mask();
+                    captured_piece = .Pawn;
+                } else unreachable;
+
+                if (captured_piece == .Rook) {
+                    switch (self.side_enemy()) {
+                        .White => {
+                            if (move.to.idx == Square.at("h1").idx) {
+                                self.castling_rights[self.side_enemy().idx()].short = false;
+                            } else if (move.to.idx == Square.at("a1").idx) {
+                                self.castling_rights[self.side_enemy().idx()].long = false;
+                            }
+                        },
+                        .Black => {
+                            if (move.to.idx == Square.at("h8").idx) {
+                                self.castling_rights[self.side_enemy().idx()].short = false;
+                            } else if (move.to.idx == Square.at("a8").idx) {
+                                self.castling_rights[self.side_enemy().idx()].long = false;
+                            }
+                        },
+                    }
+                }
+            },
+            .CASTLE => {
+                var old_rook_square: Square = undefined;
+                var new_rook_square: Square = undefined;
+
+                switch (move.to.file()) {
+                    // long castle
+                    2 => {
+                        switch (self.side_to_move) {
+                            .White => {
+                                old_rook_square = Square.at("a1");
+                                new_rook_square = Square.at("d1");
+                            },
+                            .Black => {
+                                old_rook_square = Square.at("a8");
+                                new_rook_square = Square.at("d8");
+                            },
+                        }
+                    },
+                    // short castle
+                    6 => {
+                        switch (self.side_to_move) {
+                            .White => {
+                                old_rook_square = Square.at("h1");
+                                new_rook_square = Square.at("f1");
+                            },
+                            .Black => {
+                                old_rook_square = Square.at("h8");
+                                new_rook_square = Square.at("f8");
+                            },
+                        }
+                    },
+                    else => unreachable,
+                }
+
+                self.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()] ^= old_rook_square.mask();
+                self.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()] |= new_rook_square.mask();
+
+                self.castling_rights[self.side_to_move.idx()].long = false;
+                self.castling_rights[self.side_to_move.idx()].short = false;
+            },
+            .NORMAL => {},
+        }
+
+        if (move.promotion_piece != null) {
+            self.piece_boards[self.side_to_move.idx()][move.promotion_piece.?.idx()] |= to_mask;
+        }
+
+        self.side_to_move = self.side_to_move.opp();
+    }
+
+    pub fn start() Position {
+        return .{
+            .piece_boards = .{
+                .{
+                    0x000000000000ff00,
+                    0x0000000000000042,
+                    0x0000000000000024,
+                    0x0000000000000081,
+                    0x0000000000000008,
+                    0x0000000000000010,
+                },
+                .{
+                    0x00ff000000000000,
+                    0x4200000000000000,
+                    0x2400000000000000,
+                    0x8100000000000000,
+                    0x0800000000000000,
+                    0x1000000000000000,
+                },
+            },
+            .side_to_move = Color.White,
+        };
+    }
+
+    pub fn print(self: *const Position) void {
+        var piece_mask: [64]u21 = @splat(32);
+        var color_mask: [64]u8 = @splat(32);
+
+        inline for (std.enums.values(Color), 0..) |col, ci| {
+            inline for (std.enums.values(Piece), 0..) |piece, pi| {
+                const bitmask = self.piece_boards[ci][pi];
+
+                for (0..64) |i| {
+                    if ((bitmask >> @truncate(i)) & 1 == 1) {
+                        piece_mask[i] = piece.symbol(col);
+                        color_mask[i] = col.symbol();
+                    }
+                }
+            }
+        }
+
+        std.debug.print("-" ** 33, .{});
+        std.debug.print("\n", .{});
+        for (0..8) |r| {
+            std.debug.print("|", .{});
+            for (0..8) |f| {
+                const idx = (7 - r) * 8 + f;
+                std.debug.print(" {u} |", .{piece_mask[idx]});
+            }
+            std.debug.print("\n", .{});
+            std.debug.print("-" ** 33, .{});
+            std.debug.print("\n", .{});
+        }
+    }
+
+    pub fn occupied(self: *const Position) Bitboard {
+        return self.occupiedBy(.White) | self.occupiedBy(.Black);
+    }
+
+    pub fn occupiedBy(self: *const Position, color: Color) Bitboard {
+        var result: Bitboard = 0;
+        inline for (std.enums.values(Piece)) |piece| {
+            result |= self.piece_boards[color.idx()][piece.idx()];
+        }
+
+        return result;
+    }
+
+    fn getPieceAt(self: *const Position, addr: *const [2]u8) ?Piece {
+        const square = Square.at(addr);
+
+        for (0..2) |ci| {
+            for (std.enums.values(Piece)) |piece| {
+                if (self.piece_boards[ci][piece.idx()] & square.mask() != 0) return piece;
+            }
+        }
+
+        return null;
+    }
+
+    pub fn fromFEN(input: []const u8) !Position {
+        var pos = Position.init(.White);
+
+        var rank: u8 = 7;
+        var idx: u8 = 0;
+
+        var i: u8 = 0;
+        while (i < input.len and idx < 64) : (i += 1) {
+            const char = input[i];
+            if (char >= '1' and char <= '9') {
+                idx += char - '1' + 1;
+                continue;
+            }
+
+            if (char == '/') {
+                if (rank == 0) break;
+                rank -= 1;
+                continue;
+            }
+
+            const square = Square.get(rank * 8 + (idx % 8));
+
+            var color: Color = undefined;
+
+            if (char >= 'b' and char <= 'r') {
+                color = .Black;
+            } else if (char >= 'B' and char <= 'R') {
+                color = .White;
+            } else {
+                std.debug.print("i: {}, idx: {}, char: {c}\n", .{ i, idx, char });
+                return GameError.InvalidFEN;
+            }
+
+            const piece: Piece = switch (char) {
+                'p', 'P' => .Pawn,
+                'b', 'B' => .Bishop,
+                'k', 'K' => .King,
+                'n', 'N' => .Knight,
+                'r', 'R' => .Rook,
+                'q', 'Q' => .Queen,
+                else => return GameError.InvalidFEN,
+            };
+
+            pos.piece_boards[color.idx()][piece.idx()] |= square.mask();
+            idx += 1;
+            if (idx >= 64) break;
+        }
+
+        // side to move
+
+        i += 1;
+        while (input[i] == ' ') i += 1;
+
+        pos.side_to_move = switch (input[i]) {
+            'w' => .White,
+            'b' => .Black,
+            else => {
+                std.debug.print("i: {}, char: {d}\n", .{ i, input[i] });
+                return GameError.InvalidFEN;
+            },
+        };
+
+        i += 2;
+
+        pos.castling_rights = .{ .{ .long = false, .short = false }, .{ .long = false, .short = false } };
+
+        while (i < input.len) : (i += 1) {
+            switch (input[i]) {
+                'k' => pos.castling_rights[Color.Black.idx()].short = true,
+                'q' => pos.castling_rights[Color.Black.idx()].long = true,
+                'K' => pos.castling_rights[Color.White.idx()].short = true,
+                'Q' => pos.castling_rights[Color.White.idx()].long = true,
+                else => break,
+            }
+        }
+
+        return pos;
+
+        // TODO moves counters
+    }
+};
+
+test "position_apply" {
+    var pos = Position.start();
+
+    const move = Move{ .from = .at("e2"), .to = .at("e4"), .move_type = .NORMAL };
+
+    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask(), 0);
+
+    pos.apply(move);
+
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask(), 0);
+    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask() != 0);
+}
+
+test "position_apply_capture" {
+    var pos = Position.init(.White);
+
+    pos.put(.White, .Pawn, "e4");
+    pos.put(.Black, .Pawn, "d5");
+
+    const move = Move{ .from = .at("e4"), .to = .at("d5"), .move_type = .NORMAL };
+
+    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask(), 0);
+
+    pos.apply(move);
+
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask(), 0);
+    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask() != 0);
+}
+
+test "position_apply_castle" {
+    var pos = Position.init(.White);
+
+    pos.put(.White, .King, "e1");
+    pos.put(.White, .Rook, "h1");
+
+    const move = Move{ .from = .at("e1"), .to = .at("g1"), .move_type = .CASTLE };
+    pos.apply(move);
+
+    try t.expect(pos.piece_boards[Color.White.idx()][Piece.King.idx()] & move.to.mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.King.idx()] & move.from.mask(), 0);
+
+    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Rook.idx()] & Square.at("f1").mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Rook.idx()] & Square.at("h1").mask(), 0);
+}
+
+test "position_apply_en_passant_push" {
+    var pos = Position.init(.Black);
+
+    pos.put(.White, .Pawn, "e5");
+    pos.put(.Black, .Pawn, "f7");
+
+    try pos.go("f7f5");
+
+    try t.expect(pos.en_passant_targets & Square.at("f6").mask() != 0);
+}
+
+test "position_apply_en_passant_capture" {
+    var pos = Position.init(.White);
+
+    pos.put(.Black, .Pawn, "c4");
+    pos.put(.White, .Pawn, "b2");
+    pos.put(.White, .Pawn, "a2");
+
+    pos.put(.White, .Pawn, "e5");
+    pos.put(.Black, .Pawn, "f7");
+
+    try pos.go("b2b4");
+    try pos.go("c4b3");
+
+    try pos.go("a2b3");
+
+    try pos.go("f7f5");
+    try pos.go("e5f6");
+
+    try t.expectEqual(Piece.Pawn, pos.getPieceAt("b3"));
+    try t.expectEqual(null, pos.getPieceAt("b4"));
+}
+
+test "position_apply_castling_rights_king_moved" {
+    var pos = Position.start();
+
+    try pos.go("e2e4");
+    try pos.go("e7e5");
+
+    try pos.go("e1e2");
+
+    try t.expect(!pos.castling_rights[Color.White.idx()].short);
+    try t.expect(!pos.castling_rights[Color.White.idx()].long);
+    try t.expect(pos.castling_rights[Color.Black.idx()].short);
+    try t.expect(pos.castling_rights[Color.Black.idx()].long);
+
+    try pos.go("e8e7");
+
+    try t.expect(!pos.castling_rights[Color.Black.idx()].short);
+    try t.expect(!pos.castling_rights[Color.Black.idx()].long);
+}
+
+test "position_apply_castling_rights_rook_moved" {
+    var pos = Position.init(.White);
+
+    pos.put(.White, .King, "e1");
+    pos.put(.White, .Rook, "a1");
+    pos.put(.White, .Rook, "h1");
+
+    pos.put(.Black, .King, "e8");
+    pos.put(.Black, .Rook, "a8");
+    pos.put(.Black, .Rook, "h8");
+
+    try pos.go("a1a4");
+    try t.expect(!pos.castling_rights[Color.White.idx()].long);
+    try t.expect(pos.castling_rights[Color.White.idx()].short);
+
+    try pos.go("h8h4");
+    try t.expect(!pos.castling_rights[Color.Black.idx()].short);
+    try t.expect(pos.castling_rights[Color.Black.idx()].long);
+
+    try pos.go("h1h2");
+    try t.expect(!pos.castling_rights[Color.White.idx()].short);
+
+    try pos.go("a8a7");
+    try t.expect(!pos.castling_rights[Color.Black.idx()].long);
+}
+
+test "position_apply_rook_captured" {
+    var pos = Position.init(.White);
+
+    pos.put(.White, .King, "e1");
+    pos.put(.White, .Knight, "b1");
+    pos.put(.White, .Knight, "g1");
+    pos.put(.White, .Rook, "a1");
+    pos.put(.White, .Rook, "h1");
+
+    pos.put(.Black, .King, "e8");
+    pos.put(.White, .Knight, "b8");
+    pos.put(.White, .Knight, "g8");
+    pos.put(.Black, .Rook, "a8");
+    pos.put(.Black, .Rook, "h8");
+
+    try pos.go("a1a8");
+    try t.expect(!pos.castling_rights[Color.Black.idx()].long);
+    try t.expect(pos.castling_rights[Color.Black.idx()].short);
+
+    try pos.go("h8h1");
+    try t.expect(!pos.castling_rights[Color.White.idx()].short);
+    try t.expect(!pos.castling_rights[Color.White.idx()].long);
+}
+
+test "parse_move" {
+    var pos = Position.init(.White);
+
+    pos.put(.White, .Pawn, "e4");
+    pos.put(.Black, .Pawn, "d5");
+
+    var move: Move = undefined;
+    move = try pos.parse_move("e4e5");
+
+    try t.expectEqualStrings("e4", &move.from.str());
+    try t.expectEqualStrings("e5", &move.to.str());
+    try t.expectEqual(MoveType.NORMAL, move.move_type);
+
+    move = try pos.parse_move("e4d5");
+
+    try t.expectEqualStrings("e4", &move.from.str());
+    try t.expectEqualStrings("d5", &move.to.str());
+    try t.expectEqual(MoveType.CAPTURE, move.move_type);
+
+    pos.put(.White, .King, "e1");
+    pos.put(.White, .Rook, "a1");
+    pos.put(.White, .Rook, "h1");
+
+    move = try pos.parse_move("e1g1");
+
+    try t.expectEqualStrings("e1", &move.from.str());
+    try t.expectEqualStrings("g1", &move.to.str());
+    try t.expectEqual(MoveType.CASTLE, move.move_type);
+
+    pos.put(.White, .Pawn, "b7");
+
+    move = try pos.parse_move("b7b8q");
+
+    try t.expectEqualStrings("b7", &move.from.str());
+    try t.expectEqualStrings("b8", &move.to.str());
+    try t.expectEqual(Piece.Queen, move.promotion_piece);
+}
+
+test "from_fen" {
+    const pos = try Position.fromFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    const start = Position.start();
+
+    for (0..2) |ci| {
+        for (std.enums.values(Piece)) |piece| {
+            try t.expectEqual(start.piece_boards[ci][piece.idx()], pos.piece_boards[ci][piece.idx()]);
+        }
+    }
+}
+
+fn print_bitboard(board: Bitboard) void {
+    std.debug.print("-" ** 33, .{});
+    std.debug.print("\n", .{});
+    for (0..8) |r| {
+        std.debug.print("|", .{});
+        for (0..8) |f| {
+            const idx: u8 = @intCast((7 - r) * 8 + f);
+            const mask = idx_to_bitboard(idx);
+            const c: u8 = if (board & mask == 0) ' ' else 'X';
+            std.debug.print(" {c} |", .{c});
+        }
+        std.debug.print("\n", .{});
+        std.debug.print("-" ** 33, .{});
+        std.debug.print("\n", .{});
+    }
+}
