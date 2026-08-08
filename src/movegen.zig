@@ -845,3 +845,41 @@ test "minimax_checkmate" {
         try t.expectEqual(checkmate_score, minimax(&pos, 1));
     }
 }
+
+pub fn findBestMove(pos: *const Position, depth: u8) ?Move {
+    assert(depth > 0);
+
+    var move_list = MoveList{};
+    findAll(pos, &move_list);
+    if (move_list.len == 0) return null;
+
+    const maximize: bool = (pos.side_to_move == .White);
+
+    var best_score: i16 = if (maximize) std.math.minInt(i16) else std.math.maxInt(i16);
+    var best_move: ?Move = null;
+
+    for (0..move_list.len) |i| {
+        var pos_copy = pos.*;
+        pos_copy.apply(move_list.moves[i]);
+
+        const current = minimax(&pos_copy, depth - 1);
+
+        if (best_move == null or (maximize and current > best_score) or (!maximize and current < best_score)) {
+            best_move = move_list.moves[i];
+            best_score = current;
+            continue;
+        }
+    }
+
+    return best_move;
+}
+
+test "find_best_move" {
+    // scholars mate in one
+    var pos = try Position.fromFEN("rnbqkbnr/pp3ppp/2pp4/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 0 4");
+
+    const best_move = findBestMove(&pos, 1);
+
+    try t.expectEqual(Square.f7, best_move.?.to);
+    try t.expectEqual(Square.f3, best_move.?.from);
+}
