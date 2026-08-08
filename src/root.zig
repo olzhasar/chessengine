@@ -197,7 +197,7 @@ const Square = struct {
         const target_file: i16 = self.file() + file_shift;
         if (target_file < 0 or target_file > 7) return null;
 
-        return .{ .idx = @as(u8, @intCast(target_rank * 8)) + @as(u8, @intCast(target_file)) };
+        return .{ .idx = @as(u8, @intCast(target_rank * 8 + target_file)) };
     }
 
     // get bitmask for bitwise operations with bitboard
@@ -952,51 +952,100 @@ inline fn getAttacksKnight(from: Square) Bitboard {
 }
 
 inline fn getAttacksBishop(from: Square, occupied: Bitboard) Bitboard {
-    const directions = [_]struct { x: i8, y: i8 }{
-        .{ .x = -1, .y = 1 },
-        .{ .x = 1, .y = 1 },
-        .{ .x = -1, .y = -1 },
-        .{ .x = 1, .y = -1 },
-    };
+    // TODO use magic bitboards instead
 
     var result: Bitboard = 0;
 
-    for (&directions) |*dir| {
-        inner: for (1..8) |i| {
-            const target = from.rel(@as(i8, @intCast(i)) * dir.x, @as(i8, @intCast(i)) * dir.y);
-            if (target == null) {
-                break :inner;
-            }
+    const not_a_file: Bitboard = 0xfefefefefefefefe;
+    const not_h_file: Bitboard = 0x7f7f7f7f7f7f7f7f;
 
-            result |= target.?.mask();
-            if (occupied & target.?.mask() != 0) break :inner;
-        }
+    // NE
+    var current = from.mask();
+    inline for (0..7) |_| {
+        current = (current & not_h_file) << 9;
+        if (current == 0) break;
+        result |= current;
+
+        if (current & occupied != 0) break;
+    }
+
+    // SW
+    current = from.mask();
+    inline for (0..7) |_| {
+        current = (current & not_a_file) >> 9;
+        if (current == 0) break;
+        result |= current;
+
+        if (current & occupied != 0) break;
+    }
+
+    // NW
+    current = from.mask();
+    inline for (0..7) |_| {
+        current = (current & not_a_file) << 7;
+        if (current == 0) break;
+        result |= current;
+
+        if (current & occupied != 0) break;
+    }
+
+    // SE
+    current = from.mask();
+    inline for (0..7) |_| {
+        current = (current & not_h_file) >> 7;
+        if (current == 0) break;
+        result |= current;
+
+        if (current & occupied != 0) break;
     }
 
     return result;
 }
 
 fn getAttacksRook(from: Square, occupied: Bitboard) Bitboard {
-    const directions = [_]struct { x: i8, y: i8 }{
-        .{ .x = 1, .y = 0 },
-        .{ .x = -1, .y = 0 },
-        .{ .x = 0, .y = 1 },
-        .{ .x = 0, .y = -1 },
-    };
+    // TODO use magic bitboards instead
 
     var result: Bitboard = 0;
 
-    for (&directions) |*dir| {
-        inner: for (1..8) |i| {
-            const target = from.rel(@as(i8, @intCast(i)) * dir.x, @as(i8, @intCast(i)) * dir.y);
-            if (target == null) {
-                break :inner;
-            }
+    const not_a_file: Bitboard = 0xfefefefefefefefe;
+    const not_h_file: Bitboard = 0x7f7f7f7f7f7f7f7f;
+    const not_1_rank: Bitboard = 0xffffffffffffff00;
+    const not_8_rank: Bitboard = 0x00ffffffffffffff;
 
-            result |= target.?.mask();
+    // N
+    var current = from.mask();
+    inline for (0..7) |_| {
+        current = (current & not_8_rank) << 8;
+        if (current == 0) break;
+        result |= current;
+        if (current & occupied != 0) break;
+    }
 
-            if (occupied & target.?.mask() != 0) break :inner;
-        }
+    // S
+    current = from.mask();
+    inline for (0..7) |_| {
+        current = (current & not_1_rank) >> 8;
+        if (current == 0) break;
+        result |= current;
+        if (current & occupied != 0) break;
+    }
+
+    // E
+    current = from.mask();
+    inline for (0..7) |_| {
+        current = (current & not_h_file) << 1;
+        if (current == 0) break;
+        result |= current;
+        if (current & occupied != 0) break;
+    }
+
+    // W
+    current = from.mask();
+    inline for (0..7) |_| {
+        current = (current & not_a_file) >> 1;
+        if (current == 0) break;
+        result |= current;
+        if (current & occupied != 0) break;
     }
 
     return result;
