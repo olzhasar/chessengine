@@ -626,7 +626,7 @@ fn isAttacked(area: Bitboard, attacker: Color, pos: *const Position) bool {
     return false;
 }
 
-fn isInCheck(pos: *const Position, side: Color) bool {
+pub fn isInCheck(pos: *const Position, side: Color) bool {
     const king_mask = pos.piece_boards[side.idx()][Piece.King.idx()];
 
     return isAttacked(king_mask, side.opp(), pos);
