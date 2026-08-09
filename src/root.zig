@@ -7,6 +7,7 @@ const movegen = @import("movegen.zig");
 
 pub const Move = board.Move;
 pub const Color = board.Color;
+pub const GameError = board.GameError;
 
 pub const Game = struct {
     position: board.Position,
@@ -49,9 +50,10 @@ pub const Game = struct {
     }
 
     pub fn go(self: *Game, input: []const u8) !void {
-        if (input.len != 4) return error.InvalidMove;
+        const move = try self.position.parse_move(input);
+        if (!movegen.isMoveLegal(&self.position, move)) return GameError.IllegalMove;
 
-        try self.position.go(input);
+        self.position.apply(move);
     }
 
     pub fn sideToMove(self: *Game) Color {

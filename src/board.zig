@@ -2,8 +2,9 @@ const std = @import("std");
 const assert = std.debug.assert;
 const t = std.testing;
 
-const GameError = error{
+pub const GameError = error{
     InvalidMove,
+    IllegalMove,
     InvalidFEN,
 };
 
@@ -220,7 +221,7 @@ pub const Position = struct {
         self.piece_boards[color.idx()][piece.idx()] |= square.mask();
     }
 
-    fn parse_move(self: *Position, input: []const u8) !Move {
+    pub fn parse_move(self: *Position, input: []const u8) GameError!Move {
         const occupied_self = self.occupiedBy(self.side_to_move);
         const occupied_enemy = self.occupiedBy(self.side_enemy());
 

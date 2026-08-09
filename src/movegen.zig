@@ -734,6 +734,18 @@ test "skips_moves_exposing_king" {
     try t.expect(!move_list.has("b2b4", .NORMAL));
 }
 
+pub fn isMoveLegal(pos: *const Position, move: Move) bool {
+    var legal_moves = MoveList{};
+    findAll(pos, &legal_moves);
+
+    for (0..legal_moves.len) |i| {
+        const candidate = legal_moves.moves[i];
+        if (candidate.move_type == move.move_type and candidate.from == move.from and candidate.to == move.to) return true;
+    }
+
+    return false;
+}
+
 fn count_pieces_score(piece_boards: [6]Bitboard) i16 {
     var score: i16 = 0;
 

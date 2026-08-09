@@ -36,8 +36,14 @@ pub fn main(init: std.process.Init) !void {
             std.debug.print("enter your move: ", .{});
             while (true) {
                 const input = try reader.interface.takeDelimiter('\n');
-                game.go(input.?) catch {
-                    std.debug.print("Invalid move. Use algebraic notation (e.g.: e2e4)\n", .{});
+                if (input == null) continue;
+
+                game.go(input.?) catch |err| {
+                    switch (err) {
+                        lib.GameError.IllegalMove => std.debug.print("Illegal move: {s}\n", .{input.?}),
+                        lib.GameError.InvalidMove => std.debug.print("Invalid input. Use long algebraic notation, e.g.: e2e4\n", .{}),
+                        else => unreachable,
+                    }
                     continue;
                 };
                 break;
