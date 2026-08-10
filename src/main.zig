@@ -4,6 +4,11 @@ const lib = @import("chessengine");
 
 const ENGINE_DEPTH = 5;
 
+const GameMode = enum {
+    ENGINE_VS_ENGINE,
+    HUMAN_VS_ENGINE,
+};
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const stdin = std.Io.File.stdin();
@@ -13,9 +18,14 @@ pub fn main(init: std.process.Init) !void {
 
     var game = lib.Game.new();
 
-    const playerColor = promptColor(&reader.interface);
+    const game_mode = promptGameMode(&reader.interface);
+    var player_color: lib.Color = undefined;
 
-    std.debug.print("You play: {}\n", .{playerColor});
+    if (game_mode == .HUMAN_VS_ENGINE) {
+        player_color = promptColor(&reader.interface);
+    }
+
+    std.debug.print("You play: {}\n", .{player_color});
 
     while (true) {
         game.drawBoard();
@@ -32,7 +42,7 @@ pub fn main(init: std.process.Init) !void {
             .ONGOING => {},
         }
 
-        if (game.sideToMove() == playerColor) {
+        if (game_mode == .HUMAN_VS_ENGINE and game.sideToMove() == player_color) {
             std.debug.print("enter your move: ", .{});
             while (true) {
                 const input = try reader.interface.takeDelimiter('\n');
@@ -49,9 +59,11 @@ pub fn main(init: std.process.Init) !void {
                 break;
             }
         } else {
-            std.debug.print("engine is thinking...\n", .{});
+            const side = game.sideToMove();
+
+            std.debug.print("{s} is thinking...\n", .{@tagName(side)});
             const move = game.goEngine(ENGINE_DEPTH);
-            std.debug.print("engine played: {s}\n", .{move.str()});
+            std.debug.print("{s} played: {s}\n", .{ @tagName(side), move.str() });
         }
     }
 }
@@ -65,6 +77,20 @@ fn promptColor(reader: *std.Io.Reader) lib.Color {
         switch (input.?[0]) {
             'w' => return .White,
             'b' => return .Black,
+            else => {},
+        }
+    }
+}
+
+fn promptGameMode(reader: *std.Io.Reader) GameMode {
+    std.debug.print("Select game mode:\n1 - Human vs Engine\n2 - Engine vs Engine\n", .{});
+
+    while (true) {
+        const input = reader.takeDelimiter('\n') catch continue;
+        if (input == null or input.?.len != 1) continue;
+        switch (input.?[0]) {
+            '1' => return .HUMAN_VS_ENGINE,
+            '2' => return .ENGINE_VS_ENGINE,
             else => {},
         }
     }
