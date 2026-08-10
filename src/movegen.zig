@@ -206,7 +206,7 @@ fn findForPiece(
 ) void {
     const occupied = pos.occupied();
     const occupied_self = pos.occupiedBy(pos.side_to_move);
-    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
+    const occupied_enemy = pos.occupiedBy(pos.sideEnemy());
 
     return findInner(piece, from, pos, occupied, occupied_self, occupied_enemy, out);
 }
@@ -576,7 +576,7 @@ test "castle_king_path_in_check" {
 pub fn findAll(pos: *const Position, out: *MoveList) void {
     const occupied = pos.occupied();
     const occupied_self = pos.occupiedBy(pos.side_to_move);
-    const occupied_enemy = pos.occupiedBy(pos.side_enemy());
+    const occupied_enemy = pos.occupiedBy(pos.sideEnemy());
 
     inline for (std.enums.values(Piece)) |piece| {
         var placements = pos.piece_boards[pos.side_to_move.idx()][piece.idx()];
@@ -774,6 +774,9 @@ fn minimax(pos: *const Position, depth: u8, a: ?i16, b: ?i16) i16 {
         }
         return 0;
     }
+
+    if (pos.isRepetition(2)) return 0;
+    if (pos.half_move_counter >= 100) return 0;
 
     if (depth == 0) {
         return static_eval(pos);

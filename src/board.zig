@@ -192,6 +192,46 @@ pub const CastlingRights = struct {
     short: bool = true,
 };
 
+const ZobristT = struct {
+    piece_boards: [2][6][64]u64,
+    castling_rights: [2][2]u64,
+    side_to_move: u64,
+    en_passant_targets: [8]u64,
+};
+
+fn make_zobrist_table() ZobristT {
+    @setEvalBranchQuota(100_000);
+
+    var PRNG = std.Random.DefaultPrng.init(123);
+    var rand = PRNG.random();
+
+    var z: ZobristT = undefined;
+
+    for (0..2) |ci| {
+        for (0..6) |pi| {
+            for (0..64) |si| {
+                z.piece_boards[ci][pi][si] = rand.int(u64);
+            }
+        }
+    }
+
+    for (0..2) |ci| {
+        for (0..2) |si| {
+            z.castling_rights[ci][si] = rand.int(u64);
+        }
+    }
+
+    z.side_to_move = rand.int(u64);
+
+    for (0..8) |fi| {
+        z.en_passant_targets[fi] = rand.int(u64);
+    }
+
+    return z;
+}
+
+const ZOBRIST_TABLE = make_zobrist_table();
+
 pub const Position = struct {
     // [color][piece type] bitmasks
     piece_boards: [2][6]Bitboard,
@@ -200,8 +240,12 @@ pub const Position = struct {
     side_to_move: Color,
     en_passant_targets: Bitboard = 0,
 
+    history: [101]u64 = @splat(0),
+    history_len: u8 = 0,
+    half_move_counter: u8 = 0,
+
     // the enemy (opposite) of the current side_to_move
-    pub fn side_enemy(self: *const Position) Color {
+    pub fn sideEnemy(self: *const Position) Color {
         return self.side_to_move.opp();
     }
 
@@ -221,9 +265,9 @@ pub const Position = struct {
         self.piece_boards[color.idx()][piece.idx()] |= square.mask();
     }
 
-    pub fn parse_move(self: *Position, input: []const u8) GameError!Move {
+    pub fn parseMove(self: *Position, input: []const u8) GameError!Move {
         const occupied_self = self.occupiedBy(self.side_to_move);
-        const occupied_enemy = self.occupiedBy(self.side_enemy());
+        const occupied_enemy = self.occupiedBy(self.sideEnemy());
 
         if (input.len < 4 or input.len > 5) return GameError.InvalidMove;
 
@@ -267,7 +311,7 @@ pub const Position = struct {
     }
 
     pub fn go(self: *Position, input: []const u8) !void {
-        const move = try self.parse_move(input);
+        const move = try self.parseMove(input);
 
         self.apply(move);
     }
@@ -341,7 +385,7 @@ pub const Position = struct {
                 var captured_piece: Piece = undefined;
 
                 for (std.enums.values(Piece)) |p| {
-                    const bitmask = &self.piece_boards[self.side_enemy().idx()][p.idx()];
+                    const bitmask = &self.piece_boards[self.sideEnemy().idx()][p.idx()];
                     if (bitmask.* & to_mask != 0) {
                         bitmask.* ^= to_mask;
                         captured_piece = p;
@@ -354,25 +398,25 @@ pub const Position = struct {
                         .Black => move.to.rel(0, 1),
                     };
 
-                    assert(self.piece_boards[self.side_enemy().idx()][Piece.Pawn.idx()] & pawn_to_capture.?.mask() != 0);
-                    self.piece_boards[self.side_enemy().idx()][Piece.Pawn.idx()] ^= pawn_to_capture.?.mask();
+                    assert(self.piece_boards[self.sideEnemy().idx()][Piece.Pawn.idx()] & pawn_to_capture.?.mask() != 0);
+                    self.piece_boards[self.sideEnemy().idx()][Piece.Pawn.idx()] ^= pawn_to_capture.?.mask();
                     captured_piece = .Pawn;
                 } else unreachable;
 
                 if (captured_piece == .Rook) {
-                    switch (self.side_enemy()) {
+                    switch (self.sideEnemy()) {
                         .White => {
                             if (move.to == Square.h1) {
-                                self.castling_rights[self.side_enemy().idx()].short = false;
+                                self.castling_rights[self.sideEnemy().idx()].short = false;
                             } else if (move.to == Square.a1) {
-                                self.castling_rights[self.side_enemy().idx()].long = false;
+                                self.castling_rights[self.sideEnemy().idx()].long = false;
                             }
                         },
                         .Black => {
                             if (move.to == Square.h8) {
-                                self.castling_rights[self.side_enemy().idx()].short = false;
+                                self.castling_rights[self.sideEnemy().idx()].short = false;
                             } else if (move.to == Square.a8) {
-                                self.castling_rights[self.side_enemy().idx()].long = false;
+                                self.castling_rights[self.sideEnemy().idx()].long = false;
                             }
                         },
                     }
@@ -426,10 +470,38 @@ pub const Position = struct {
         }
 
         self.side_to_move = self.side_to_move.opp();
+
+        // is the move irreversible
+        if (piece == .Pawn or move.move_type != .NORMAL) {
+            self.history_len = 0;
+            self.half_move_counter = 0;
+        } else {
+            self.half_move_counter += 1;
+        }
+        self.saveHash();
+    }
+
+    fn saveHash(self: *Position) void {
+        self.history[self.history_len] = self.hash();
+        self.history_len += 1;
+    }
+
+    pub fn isRepetition(self: *const Position, limit: u8) bool {
+        assert(limit >= 1);
+
+        var counter: u8 = 0;
+
+        var i: usize = 2;
+        while (i < self.history_len) : (i += 2) {
+            if (self.history[self.history_len - 1] == self.history[self.history_len - 1 - i]) counter += 1;
+            if (counter >= (limit - 1)) return true;
+        }
+
+        return false;
     }
 
     pub fn start() Position {
-        return .{
+        var pos = Position{
             .piece_boards = .{
                 .{
                     0x000000000000ff00,
@@ -450,6 +522,10 @@ pub const Position = struct {
             },
             .side_to_move = Color.White,
         };
+
+        pos.saveHash();
+
+        return pos;
     }
 
     pub fn print(self: *const Position) void {
@@ -582,9 +658,49 @@ pub const Position = struct {
             }
         }
 
+        pos.saveHash();
+
         return pos;
 
         // TODO moves counters
+    }
+
+    pub fn hash(self: *const Position) u64 {
+        // TODO: incremental updates
+
+        var result: u64 = 0;
+
+        for (0..2) |ci| {
+            for (std.enums.values(Piece)) |piece| {
+                var bitboard = self.piece_boards[ci][piece.idx()];
+                while (bitboard != 0) : (bitboard &= bitboard - 1) {
+                    const idx = @ctz(bitboard);
+                    result ^= ZOBRIST_TABLE.piece_boards[ci][piece.idx()][idx];
+                }
+            }
+        }
+
+        if (self.side_to_move == .Black) {
+            result ^= ZOBRIST_TABLE.side_to_move;
+        }
+
+        for (0..2) |ci| {
+            if (self.castling_rights[ci].long) {
+                result ^= ZOBRIST_TABLE.castling_rights[ci][0];
+            }
+            if (self.castling_rights[ci].short) {
+                result ^= ZOBRIST_TABLE.castling_rights[ci][1];
+            }
+        }
+
+        var en_passant_board = self.en_passant_targets;
+        while (en_passant_board != 0) : (en_passant_board &= en_passant_board - 1) {
+            const square = Square.from_int(@ctz(en_passant_board));
+
+            result ^= ZOBRIST_TABLE.en_passant_targets[square.file()];
+        }
+
+        return result;
     }
 };
 
@@ -744,13 +860,13 @@ test "parse_move" {
     pos.put(.Black, .Pawn, .d5);
 
     var move: Move = undefined;
-    move = try pos.parse_move("e4e5");
+    move = try pos.parseMove("e4e5");
 
     try t.expectEqualStrings("e4", &move.from.str());
     try t.expectEqualStrings("e5", &move.to.str());
     try t.expectEqual(MoveType.NORMAL, move.move_type);
 
-    move = try pos.parse_move("e4d5");
+    move = try pos.parseMove("e4d5");
 
     try t.expectEqualStrings("e4", &move.from.str());
     try t.expectEqualStrings("d5", &move.to.str());
@@ -760,7 +876,7 @@ test "parse_move" {
     pos.put(.White, .Rook, .a1);
     pos.put(.White, .Rook, .h1);
 
-    move = try pos.parse_move("e1g1");
+    move = try pos.parseMove("e1g1");
 
     try t.expectEqualStrings("e1", &move.from.str());
     try t.expectEqualStrings("g1", &move.to.str());
@@ -768,7 +884,7 @@ test "parse_move" {
 
     pos.put(.White, .Pawn, .b7);
 
-    move = try pos.parse_move("b7b8q");
+    move = try pos.parseMove("b7b8q");
 
     try t.expectEqualStrings("b7", &move.from.str());
     try t.expectEqualStrings("b8", &move.to.str());
@@ -784,6 +900,24 @@ test "from_fen" {
             try t.expectEqual(start.piece_boards[ci][piece.idx()], pos.piece_boards[ci][piece.idx()]);
         }
     }
+}
+
+test "hash" {
+    const pos1 = try Position.fromFEN("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1");
+    const pos2 = try Position.fromFEN("r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1");
+
+    try t.expect(pos1.hash() != pos2.hash());
+}
+
+test "threefold repetition" {
+    var pos = Position.start();
+    const moves = [_][]const u8{ "g1f3", "g8f6", "f3g1", "f6g8" };
+
+    for (moves) |m| try pos.go(m);
+    try t.expect(!pos.isRepetition(3));
+
+    for (moves) |m| try pos.go(m);
+    try t.expect(pos.isRepetition(3));
 }
 
 fn print_bitboard(board: Bitboard) void {

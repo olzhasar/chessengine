@@ -32,11 +32,19 @@ pub fn main(init: std.process.Init) !void {
 
         switch (game.status()) {
             .CHECKMATE => {
-                std.debug.print("{} wins by checkmate!", .{game.position.side_to_move});
+                std.debug.print("{} wins by checkmate!\n", .{game.position.sideEnemy()});
                 break;
             },
             .STALEMATE => {
-                std.debug.print("The game ended in stalemate!", .{});
+                std.debug.print("The game ended in stalemate!\n", .{});
+                break;
+            },
+            .DRAW_BY_REPETITION => {
+                std.debug.print("Draw by repetition!\n", .{});
+                break;
+            },
+            .DRAW_50_RULE => {
+                std.debug.print("Draw by the 50-move rule!\n", .{});
                 break;
             },
             .ONGOING => {},

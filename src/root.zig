@@ -16,6 +16,8 @@ pub const Game = struct {
         CHECKMATE,
         STALEMATE,
         ONGOING,
+        DRAW_BY_REPETITION,
+        DRAW_50_RULE,
     };
 
     pub fn new() Game {
@@ -25,6 +27,9 @@ pub const Game = struct {
     }
 
     pub fn status(self: *Game) GameStatus {
+        if (self.position.half_move_counter >= 100) return .DRAW_50_RULE;
+        if (self.position.isRepetition(3)) return .DRAW_BY_REPETITION;
+
         var move_list = movegen.MoveList{};
         movegen.findAll(&self.position, &move_list);
 
@@ -50,7 +55,7 @@ pub const Game = struct {
     }
 
     pub fn go(self: *Game, input: []const u8) !void {
-        const move = try self.position.parse_move(input);
+        const move = try self.position.parseMove(input);
         if (!movegen.isMoveLegal(&self.position, move)) return GameError.IllegalMove;
 
         self.position.apply(move);
