@@ -242,6 +242,7 @@ pub const Position = struct {
 
     history: [101]u64 = @splat(0),
     history_len: u8 = 0,
+    hash: u64 = 0,
     half_move_counter: u8 = 0,
 
     // the enemy (opposite) of the current side_to_move
@@ -250,19 +251,23 @@ pub const Position = struct {
     }
 
     pub fn init(side_to_move: Color) Position {
-        return .{
+        var pos = Position{
             .side_to_move = side_to_move,
             .piece_boards = .{
                 @splat(0),
                 @splat(0),
             },
         };
+
+        pos.hash = pos.calculateHash();
+        return pos;
     }
 
     pub fn put(self: *Position, color: Color, piece: Piece, square: Square) void {
         assert(self.occupied() & square.mask() == 0);
 
         self.piece_boards[color.idx()][piece.idx()] |= square.mask();
+        self.hash ^= ZOBRIST_TABLE.piece_boards[color.idx()][piece.idx()][square.as_usize()];
     }
 
     pub fn parseMove(self: *Position, input: []const u8) GameError!Move {
@@ -320,6 +325,11 @@ pub const Position = struct {
         var mask: u64 = (1 << 32) - 1;
         if (side == .White) mask = ~mask;
 
+        var removed_targets = self.en_passant_targets & ~mask;
+        while (removed_targets != 0) : (removed_targets &= removed_targets - 1) {
+            const square = Square.from_int(@ctz(removed_targets));
+            self.hash ^= ZOBRIST_TABLE.en_passant_targets[square.file()];
+        }
         self.en_passant_targets &= mask;
     }
 
@@ -336,7 +346,12 @@ pub const Position = struct {
 
             if (bitmask.* & from_mask != 0) {
                 bitmask.* ^= from_mask;
-                if (move.promotion_piece == null) bitmask.* |= to_mask;
+                self.hash ^= ZOBRIST_TABLE.piece_boards[self.side_to_move.idx()][p.idx()][move.from.as_usize()];
+
+                if (move.promotion_piece == null) {
+                    bitmask.* |= to_mask;
+                    self.hash ^= ZOBRIST_TABLE.piece_boards[self.side_to_move.idx()][p.idx()][move.to.as_usize()];
+                }
                 piece = p;
 
                 break;
@@ -353,29 +368,48 @@ pub const Position = struct {
                     };
 
                     self.en_passant_targets |= en_passant_square.?.mask();
+                    self.hash ^= ZOBRIST_TABLE.en_passant_targets[en_passant_square.?.file()];
                 }
             },
             .Rook => {
                 switch (self.side_to_move) {
                     .White => {
                         if (move.from == Square.h1) {
-                            self.castling_rights[self.side_to_move.idx()].short = false;
+                            if (self.castling_rights[self.side_to_move.idx()].short) {
+                                self.castling_rights[self.side_to_move.idx()].short = false;
+                                self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][0];
+                            }
                         } else if (move.from == Square.a1) {
-                            self.castling_rights[self.side_to_move.idx()].long = false;
+                            if (self.castling_rights[self.side_to_move.idx()].long) {
+                                self.castling_rights[self.side_to_move.idx()].long = false;
+                                self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][1];
+                            }
                         }
                     },
                     .Black => {
                         if (move.from == Square.h8) {
-                            self.castling_rights[self.side_to_move.idx()].short = false;
+                            if (self.castling_rights[self.side_to_move.idx()].short) {
+                                self.castling_rights[self.side_to_move.idx()].short = false;
+                                self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][0];
+                            }
                         } else if (move.from == Square.a8) {
-                            self.castling_rights[self.side_to_move.idx()].long = false;
+                            if (self.castling_rights[self.side_to_move.idx()].long) {
+                                self.castling_rights[self.side_to_move.idx()].long = false;
+                                self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][1];
+                            }
                         }
                     },
                 }
             },
             .King => {
-                self.castling_rights[self.side_to_move.idx()].short = false;
-                self.castling_rights[self.side_to_move.idx()].long = false;
+                if (self.castling_rights[self.side_to_move.idx()].short) {
+                    self.castling_rights[self.side_to_move.idx()].short = false;
+                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][0];
+                }
+                if (self.castling_rights[self.side_to_move.idx()].long) {
+                    self.castling_rights[self.side_to_move.idx()].long = false;
+                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][1];
+                }
             },
             else => {},
         }
@@ -389,6 +423,8 @@ pub const Position = struct {
                     if (bitmask.* & to_mask != 0) {
                         bitmask.* ^= to_mask;
                         captured_piece = p;
+                        self.hash ^= ZOBRIST_TABLE.piece_boards[self.sideEnemy().idx()][p.idx()][@ctz(to_mask)];
+
                         break;
                     }
                 } else if (self.en_passant_targets & move.to.mask() != 0) {
@@ -400,6 +436,7 @@ pub const Position = struct {
 
                     assert(self.piece_boards[self.sideEnemy().idx()][Piece.Pawn.idx()] & pawn_to_capture.?.mask() != 0);
                     self.piece_boards[self.sideEnemy().idx()][Piece.Pawn.idx()] ^= pawn_to_capture.?.mask();
+                    self.hash ^= ZOBRIST_TABLE.piece_boards[self.sideEnemy().idx()][Piece.Pawn.idx()][pawn_to_capture.?.as_usize()];
                     captured_piece = .Pawn;
                 } else unreachable;
 
@@ -407,16 +444,28 @@ pub const Position = struct {
                     switch (self.sideEnemy()) {
                         .White => {
                             if (move.to == Square.h1) {
-                                self.castling_rights[self.sideEnemy().idx()].short = false;
+                                if (self.castling_rights[self.sideEnemy().idx()].short) {
+                                    self.castling_rights[self.sideEnemy().idx()].short = false;
+                                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.sideEnemy().idx()][0];
+                                }
                             } else if (move.to == Square.a1) {
-                                self.castling_rights[self.sideEnemy().idx()].long = false;
+                                if (self.castling_rights[self.sideEnemy().idx()].long) {
+                                    self.castling_rights[self.sideEnemy().idx()].long = false;
+                                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.sideEnemy().idx()][1];
+                                }
                             }
                         },
                         .Black => {
                             if (move.to == Square.h8) {
-                                self.castling_rights[self.sideEnemy().idx()].short = false;
+                                if (self.castling_rights[self.sideEnemy().idx()].short) {
+                                    self.castling_rights[self.sideEnemy().idx()].short = false;
+                                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.sideEnemy().idx()][0];
+                                }
                             } else if (move.to == Square.a8) {
-                                self.castling_rights[self.sideEnemy().idx()].long = false;
+                                if (self.castling_rights[self.sideEnemy().idx()].long) {
+                                    self.castling_rights[self.sideEnemy().idx()].long = false;
+                                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.sideEnemy().idx()][1];
+                                }
                             }
                         },
                     }
@@ -458,18 +507,28 @@ pub const Position = struct {
 
                 self.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()] ^= old_rook_square.mask();
                 self.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()] |= new_rook_square.mask();
+                self.hash ^= ZOBRIST_TABLE.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()][old_rook_square.as_usize()];
+                self.hash ^= ZOBRIST_TABLE.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()][new_rook_square.as_usize()];
 
-                self.castling_rights[self.side_to_move.idx()].long = false;
-                self.castling_rights[self.side_to_move.idx()].short = false;
+                if (self.castling_rights[self.side_to_move.idx()].short) {
+                    self.castling_rights[self.side_to_move.idx()].short = false;
+                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][0];
+                }
+                if (self.castling_rights[self.side_to_move.idx()].long) {
+                    self.castling_rights[self.side_to_move.idx()].long = false;
+                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][1];
+                }
             },
             .NORMAL => {},
         }
 
         if (move.promotion_piece != null) {
             self.piece_boards[self.side_to_move.idx()][move.promotion_piece.?.idx()] |= to_mask;
+            self.hash ^= ZOBRIST_TABLE.piece_boards[self.side_to_move.idx()][move.promotion_piece.?.idx()][move.to.as_usize()];
         }
 
         self.side_to_move = self.side_to_move.opp();
+        self.hash ^= ZOBRIST_TABLE.side_to_move;
 
         // is the move irreversible
         if (piece == .Pawn or move.move_type != .NORMAL) {
@@ -482,7 +541,7 @@ pub const Position = struct {
     }
 
     fn saveHash(self: *Position) void {
-        self.history[self.history_len] = self.hash();
+        self.history[self.history_len] = self.hash;
         self.history_len += 1;
     }
 
@@ -523,6 +582,7 @@ pub const Position = struct {
             .side_to_move = Color.White,
         };
 
+        pos.hash = pos.calculateHash();
         pos.saveHash();
 
         return pos;
@@ -658,6 +718,7 @@ pub const Position = struct {
             }
         }
 
+        pos.hash = pos.calculateHash();
         pos.saveHash();
 
         return pos;
@@ -665,7 +726,7 @@ pub const Position = struct {
         // TODO moves counters
     }
 
-    pub fn hash(self: *const Position) u64 {
+    pub fn calculateHash(self: *const Position) u64 {
         // TODO: incremental updates
 
         var result: u64 = 0;
@@ -685,10 +746,10 @@ pub const Position = struct {
         }
 
         for (0..2) |ci| {
-            if (self.castling_rights[ci].long) {
+            if (self.castling_rights[ci].short) {
                 result ^= ZOBRIST_TABLE.castling_rights[ci][0];
             }
-            if (self.castling_rights[ci].short) {
+            if (self.castling_rights[ci].long) {
                 result ^= ZOBRIST_TABLE.castling_rights[ci][1];
             }
         }
@@ -906,7 +967,43 @@ test "hash" {
     const pos1 = try Position.fromFEN("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1");
     const pos2 = try Position.fromFEN("r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1");
 
-    try t.expect(pos1.hash() != pos2.hash());
+    try t.expect(pos1.calculateHash() != pos2.calculateHash());
+}
+
+test "incremental hash matches full hash" {
+    var position = Position.start();
+    try t.expectEqual(position.hash, position.calculateHash());
+
+    const moves = [_][]const u8{
+        "e2e4", "d7d5", "e4d5", "g8f6", "d5d6", "h7h6", "d6d7", "h6h5",
+    };
+    for (moves) |move| {
+        try position.go(move);
+        try t.expectEqual(position.hash, position.calculateHash());
+    }
+
+    var promotion = try Position.fromFEN("4k3/P7/8/8/8/8/8/4K3 w - - 0 1");
+    try promotion.go("a7a8q");
+    try t.expectEqual(position.hash, position.calculateHash());
+
+    var en_passant = try Position.fromFEN("4k3/5p2/8/4P3/8/8/8/4K3 b - - 0 1");
+    try en_passant.go("f7f5");
+    try t.expectEqual(position.hash, position.calculateHash());
+    try en_passant.go("e5f6");
+    try t.expectEqual(position.hash, position.calculateHash());
+
+    var castling = try Position.fromFEN("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1");
+    try castling.go("e1g1");
+    try t.expectEqual(position.hash, position.calculateHash());
+    try castling.go("e8c8");
+    try t.expectEqual(position.hash, position.calculateHash());
+
+    var repeated_rook_move = try Position.fromFEN("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1");
+    const rook_moves = [_][]const u8{ "h1h2", "h8h7", "h2h1", "h7h8" };
+    for (rook_moves) |move| {
+        try repeated_rook_move.go(move);
+        try t.expectEqual(position.hash, position.calculateHash());
+    }
 }
 
 test "threefold repetition" {
