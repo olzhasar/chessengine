@@ -187,9 +187,38 @@ pub const Move = struct {
     }
 };
 
+const CastleSide = enum(u1) {
+    short,
+    long,
+
+    fn idx(self: CastleSide) u1 {
+        return @intFromEnum(self);
+    }
+};
+
 pub const CastlingRights = struct {
-    long: bool = true,
-    short: bool = true,
+    bits: u4 = 0b1111,
+
+    fn bit(color: Color, side: CastleSide) u4 {
+        return @as(u4, 1) << @intCast(color.idx() * 2 + side.idx());
+    }
+
+    pub fn has(self: CastlingRights, color: Color, side: CastleSide) bool {
+        return self.bits & bit(color, side) != 0;
+    }
+
+    fn revoke(self: *CastlingRights, color: Color, side: CastleSide) bool {
+        const _bit = bit(color, side);
+        if (self.bits & _bit == 0) return false;
+        self.bits &= ~_bit;
+
+        return true;
+    }
+
+    // for fen parsing only
+    fn grant(self: *CastlingRights, color: Color, side: CastleSide) void {
+        self.bits |= bit(color, side);
+    }
 };
 
 const ZobristT = struct {
@@ -236,7 +265,7 @@ pub const Position = struct {
     // [color][piece type] bitmasks
     piece_boards: [2][6]Bitboard,
     // [piece][short, long]
-    castling_rights: [2]CastlingRights = .{ .{}, .{} },
+    castling_rights: CastlingRights = .{},
     side_to_move: Color,
     en_passant_targets: Bitboard = 0,
 
@@ -333,6 +362,22 @@ pub const Position = struct {
         self.en_passant_targets &= mask;
     }
 
+    fn revokeCastlingRight(self: *Position, color: Color, side: CastleSide) void {
+        if (self.castling_rights.revoke(color, side)) {
+            self.hash ^= ZOBRIST_TABLE.castling_rights[color.idx()][side.idx()];
+        }
+    }
+
+    fn revokeCastlingRightAt(self: *Position, square: Square) void {
+        switch (square) {
+            .h1 => self.revokeCastlingRight(.White, .short),
+            .a1 => self.revokeCastlingRight(.White, .long),
+            .h8 => self.revokeCastlingRight(.Black, .short),
+            .a8 => self.revokeCastlingRight(.Black, .long),
+            else => {},
+        }
+    }
+
     pub fn apply(self: *Position, move: Move) void {
         const from_mask = move.from.mask();
         const to_mask = move.to.mask();
@@ -371,58 +416,22 @@ pub const Position = struct {
                     self.hash ^= ZOBRIST_TABLE.en_passant_targets[en_passant_square.?.file()];
                 }
             },
-            .Rook => {
-                switch (self.side_to_move) {
-                    .White => {
-                        if (move.from == Square.h1) {
-                            if (self.castling_rights[self.side_to_move.idx()].short) {
-                                self.castling_rights[self.side_to_move.idx()].short = false;
-                                self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][0];
-                            }
-                        } else if (move.from == Square.a1) {
-                            if (self.castling_rights[self.side_to_move.idx()].long) {
-                                self.castling_rights[self.side_to_move.idx()].long = false;
-                                self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][1];
-                            }
-                        }
-                    },
-                    .Black => {
-                        if (move.from == Square.h8) {
-                            if (self.castling_rights[self.side_to_move.idx()].short) {
-                                self.castling_rights[self.side_to_move.idx()].short = false;
-                                self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][0];
-                            }
-                        } else if (move.from == Square.a8) {
-                            if (self.castling_rights[self.side_to_move.idx()].long) {
-                                self.castling_rights[self.side_to_move.idx()].long = false;
-                                self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][1];
-                            }
-                        }
-                    },
-                }
-            },
             .King => {
-                if (self.castling_rights[self.side_to_move.idx()].short) {
-                    self.castling_rights[self.side_to_move.idx()].short = false;
-                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][0];
-                }
-                if (self.castling_rights[self.side_to_move.idx()].long) {
-                    self.castling_rights[self.side_to_move.idx()].long = false;
-                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][1];
-                }
+                self.revokeCastlingRight(self.side_to_move, .long);
+                self.revokeCastlingRight(self.side_to_move, .short);
             },
             else => {},
         }
 
+        self.revokeCastlingRightAt(move.to);
+        self.revokeCastlingRightAt(move.from);
+
         switch (move.move_type) {
             .CAPTURE => {
-                var captured_piece: Piece = undefined;
-
                 for (std.enums.values(Piece)) |p| {
                     const bitmask = &self.piece_boards[self.sideEnemy().idx()][p.idx()];
                     if (bitmask.* & to_mask != 0) {
                         bitmask.* ^= to_mask;
-                        captured_piece = p;
                         self.hash ^= ZOBRIST_TABLE.piece_boards[self.sideEnemy().idx()][p.idx()][@ctz(to_mask)];
 
                         break;
@@ -437,39 +446,7 @@ pub const Position = struct {
                     assert(self.piece_boards[self.sideEnemy().idx()][Piece.Pawn.idx()] & pawn_to_capture.?.mask() != 0);
                     self.piece_boards[self.sideEnemy().idx()][Piece.Pawn.idx()] ^= pawn_to_capture.?.mask();
                     self.hash ^= ZOBRIST_TABLE.piece_boards[self.sideEnemy().idx()][Piece.Pawn.idx()][pawn_to_capture.?.as_usize()];
-                    captured_piece = .Pawn;
                 } else unreachable;
-
-                if (captured_piece == .Rook) {
-                    switch (self.sideEnemy()) {
-                        .White => {
-                            if (move.to == Square.h1) {
-                                if (self.castling_rights[self.sideEnemy().idx()].short) {
-                                    self.castling_rights[self.sideEnemy().idx()].short = false;
-                                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.sideEnemy().idx()][0];
-                                }
-                            } else if (move.to == Square.a1) {
-                                if (self.castling_rights[self.sideEnemy().idx()].long) {
-                                    self.castling_rights[self.sideEnemy().idx()].long = false;
-                                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.sideEnemy().idx()][1];
-                                }
-                            }
-                        },
-                        .Black => {
-                            if (move.to == Square.h8) {
-                                if (self.castling_rights[self.sideEnemy().idx()].short) {
-                                    self.castling_rights[self.sideEnemy().idx()].short = false;
-                                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.sideEnemy().idx()][0];
-                                }
-                            } else if (move.to == Square.a8) {
-                                if (self.castling_rights[self.sideEnemy().idx()].long) {
-                                    self.castling_rights[self.sideEnemy().idx()].long = false;
-                                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.sideEnemy().idx()][1];
-                                }
-                            }
-                        },
-                    }
-                }
             },
             .CASTLE => {
                 var old_rook_square: Square = undefined;
@@ -510,14 +487,8 @@ pub const Position = struct {
                 self.hash ^= ZOBRIST_TABLE.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()][old_rook_square.as_usize()];
                 self.hash ^= ZOBRIST_TABLE.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()][new_rook_square.as_usize()];
 
-                if (self.castling_rights[self.side_to_move.idx()].short) {
-                    self.castling_rights[self.side_to_move.idx()].short = false;
-                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][0];
-                }
-                if (self.castling_rights[self.side_to_move.idx()].long) {
-                    self.castling_rights[self.side_to_move.idx()].long = false;
-                    self.hash ^= ZOBRIST_TABLE.castling_rights[self.side_to_move.idx()][1];
-                }
+                self.revokeCastlingRight(self.side_to_move, .long);
+                self.revokeCastlingRight(self.side_to_move, .short);
             },
             .NORMAL => {},
         }
@@ -706,14 +677,14 @@ pub const Position = struct {
 
         i += 2;
 
-        pos.castling_rights = .{ .{ .long = false, .short = false }, .{ .long = false, .short = false } };
+        pos.castling_rights.bits = 0;
 
         while (i < input.len) : (i += 1) {
             switch (input[i]) {
-                'k' => pos.castling_rights[Color.Black.idx()].short = true,
-                'q' => pos.castling_rights[Color.Black.idx()].long = true,
-                'K' => pos.castling_rights[Color.White.idx()].short = true,
-                'Q' => pos.castling_rights[Color.White.idx()].long = true,
+                'k' => pos.castling_rights.grant(.Black, .short),
+                'q' => pos.castling_rights.grant(.Black, .long),
+                'K' => pos.castling_rights.grant(.White, .short),
+                'Q' => pos.castling_rights.grant(.White, .long),
                 else => break,
             }
         }
@@ -745,12 +716,12 @@ pub const Position = struct {
             result ^= ZOBRIST_TABLE.side_to_move;
         }
 
-        for (0..2) |ci| {
-            if (self.castling_rights[ci].short) {
-                result ^= ZOBRIST_TABLE.castling_rights[ci][0];
+        for (std.enums.values(Color)) |color| {
+            if (self.castling_rights.has(color, .short)) {
+                result ^= ZOBRIST_TABLE.castling_rights[color.idx()][CastleSide.short.idx()];
             }
-            if (self.castling_rights[ci].long) {
-                result ^= ZOBRIST_TABLE.castling_rights[ci][1];
+            if (self.castling_rights.has(color, .long)) {
+                result ^= ZOBRIST_TABLE.castling_rights[color.idx()][CastleSide.long.idx()];
             }
         }
 
@@ -853,15 +824,15 @@ test "position_apply_castling_rights_king_moved" {
 
     try pos.go("e1e2");
 
-    try t.expect(!pos.castling_rights[Color.White.idx()].short);
-    try t.expect(!pos.castling_rights[Color.White.idx()].long);
-    try t.expect(pos.castling_rights[Color.Black.idx()].short);
-    try t.expect(pos.castling_rights[Color.Black.idx()].long);
+    try t.expect(!pos.castling_rights.has(.White, .short));
+    try t.expect(!pos.castling_rights.has(.White, .long));
+    try t.expect(pos.castling_rights.has(.Black, .short));
+    try t.expect(pos.castling_rights.has(.Black, .long));
 
     try pos.go("e8e7");
 
-    try t.expect(!pos.castling_rights[Color.Black.idx()].short);
-    try t.expect(!pos.castling_rights[Color.Black.idx()].long);
+    try t.expect(!pos.castling_rights.has(.Black, .short));
+    try t.expect(!pos.castling_rights.has(.Black, .long));
 }
 
 test "position_apply_castling_rights_rook_moved" {
@@ -876,18 +847,18 @@ test "position_apply_castling_rights_rook_moved" {
     pos.put(.Black, .Rook, .h8);
 
     try pos.go("a1a4");
-    try t.expect(!pos.castling_rights[Color.White.idx()].long);
-    try t.expect(pos.castling_rights[Color.White.idx()].short);
+    try t.expect(!pos.castling_rights.has(.White, .long));
+    try t.expect(pos.castling_rights.has(.White, .short));
 
     try pos.go("h8h4");
-    try t.expect(!pos.castling_rights[Color.Black.idx()].short);
-    try t.expect(pos.castling_rights[Color.Black.idx()].long);
+    try t.expect(!pos.castling_rights.has(.Black, .short));
+    try t.expect(pos.castling_rights.has(.Black, .long));
 
     try pos.go("h1h2");
-    try t.expect(!pos.castling_rights[Color.White.idx()].short);
+    try t.expect(!pos.castling_rights.has(.White, .short));
 
     try pos.go("a8a7");
-    try t.expect(!pos.castling_rights[Color.Black.idx()].long);
+    try t.expect(!pos.castling_rights.has(.Black, .long));
 }
 
 test "position_apply_rook_captured" {
@@ -906,12 +877,12 @@ test "position_apply_rook_captured" {
     pos.put(.Black, .Rook, .h8);
 
     try pos.go("a1a8");
-    try t.expect(!pos.castling_rights[Color.Black.idx()].long);
-    try t.expect(pos.castling_rights[Color.Black.idx()].short);
+    try t.expect(!pos.castling_rights.has(.Black, .long));
+    try t.expect(pos.castling_rights.has(.Black, .short));
 
     try pos.go("h8h1");
-    try t.expect(!pos.castling_rights[Color.White.idx()].short);
-    try t.expect(!pos.castling_rights[Color.White.idx()].long);
+    try t.expect(!pos.castling_rights.has(.White, .long));
+    try t.expect(!pos.castling_rights.has(.White, .short));
 }
 
 test "parse_move" {

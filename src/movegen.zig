@@ -115,11 +115,11 @@ fn getEnPassantMoves(from: Square, side: Color, pos: *const Position, out: *Move
 fn getCastleMoves(from: Square, side: Color, pos: *const Position, occupied: Bitboard, out: *MoveList) void {
     if (side == .White and from != Square.e1) return;
     if (side == .Black and from != Square.e8) return;
-    if (!pos.castling_rights[side.idx()].long and !pos.castling_rights[side.idx()].short) return;
+    if (!pos.castling_rights.has(side, .long) and !pos.castling_rights.has(side, .short)) return;
 
     if (isInCheck(pos, side)) return;
 
-    if (pos.castling_rights[side.idx()].short) blk: {
+    if (pos.castling_rights.has(side, .short)) blk: {
         const squares: [2]Square = switch (side) {
             .White => [2]Square{ .f1, .g1 },
             .Black => [2]Square{ .f8, .g8 },
@@ -133,7 +133,7 @@ fn getCastleMoves(from: Square, side: Color, pos: *const Position, occupied: Bit
         out.append(from, squares[1], .CASTLE);
     }
 
-    if (pos.castling_rights[side.idx()].long) blk: {
+    if (pos.castling_rights.has(side, .long)) blk: {
         const squares: [3]Square = switch (side) {
             .White => [3]Square{ .d1, .c1, .b1 },
             .Black => [3]Square{ .d8, .c8, .b8 },
