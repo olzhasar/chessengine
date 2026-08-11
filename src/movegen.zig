@@ -626,10 +626,39 @@ fn isAttacked(area: Bitboard, attacker: Color, pos: *const Position) bool {
     return false;
 }
 
+fn isSquareAttacked(square: Square, defender: Color, pos: *const Position) bool {
+    var pawn_attacks: Bitboard = 0;
+    const pawn1 = square.rel(1, defender.pawn_direction());
+    if (pawn1 != null) pawn_attacks |= pawn1.?.mask();
+    const pawn2 = square.rel(-1, defender.pawn_direction());
+    if (pawn2 != null) pawn_attacks |= pawn2.?.mask();
+
+    if (pawn_attacks & pos.piece_boards[defender.opp().idx()][Piece.Pawn.idx()] != 0) return true;
+
+    const knight_attacks = attacks.getAttacksKnight(square);
+    if (knight_attacks & pos.piece_boards[defender.opp().idx()][Piece.Knight.idx()] != 0) return true;
+
+    const king_attacks = attacks.getAttacksKing(square);
+    if (king_attacks & pos.piece_boards[defender.opp().idx()][Piece.King.idx()] != 0) return true;
+
+    const occupied = pos.occupied();
+
+    const attacker_pieces = pos.piece_boards[defender.opp().idx()];
+
+    const rook_attacks = attacks.getAttacksRook(square, occupied);
+    if (rook_attacks & (attacker_pieces[Piece.Rook.idx()] | attacker_pieces[Piece.Queen.idx()]) != 0) return true;
+
+    const bishop_attacks = attacks.getAttacksBishop(square, occupied);
+    return bishop_attacks & (attacker_pieces[Piece.Bishop.idx()] | attacker_pieces[Piece.Queen.idx()]) != 0;
+}
+
 pub fn isInCheck(pos: *const Position, side: Color) bool {
     const king_mask = pos.piece_boards[side.idx()][Piece.King.idx()];
+    if (king_mask == 0) return false;
 
-    return isAttacked(king_mask, side.opp(), pos);
+    const king_square = Square.from_int(@ctz(king_mask));
+
+    return isSquareAttacked(king_square, side, pos);
 }
 
 test "is_check_no" {

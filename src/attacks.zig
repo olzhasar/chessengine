@@ -97,11 +97,11 @@ inline fn getAttacksPawn(from: Square, side: Color) Bitboard {
     return ATTACKS_PAWN[side.idx()][from.as_usize()];
 }
 
-inline fn getAttacksKnight(from: Square) Bitboard {
+pub inline fn getAttacksKnight(from: Square) Bitboard {
     return ATTACKS_KNIGHT[from.as_usize()];
 }
 
-inline fn getAttacksBishop(from: Square, occupied: Bitboard) Bitboard {
+pub fn getAttacksBishop(from: Square, occupied: Bitboard) Bitboard {
     // TODO use magic bitboards instead
 
     var result: Bitboard = 0;
@@ -152,7 +152,7 @@ inline fn getAttacksBishop(from: Square, occupied: Bitboard) Bitboard {
     return result;
 }
 
-fn getAttacksRook(from: Square, occupied: Bitboard) Bitboard {
+pub fn getAttacksRook(from: Square, occupied: Bitboard) Bitboard {
     // TODO use magic bitboards instead
 
     var result: Bitboard = 0;
@@ -201,11 +201,11 @@ fn getAttacksRook(from: Square, occupied: Bitboard) Bitboard {
     return result;
 }
 
-fn getAttacksQueen(from: Square, occupied: Bitboard) Bitboard {
+inline fn getAttacksQueen(from: Square, occupied: Bitboard) Bitboard {
     return getAttacksBishop(from, occupied) | getAttacksRook(from, occupied);
 }
 
-fn getAttacksKing(from: Square) Bitboard {
+pub fn getAttacksKing(from: Square) Bitboard {
     return ATTACKS_KING[from.as_usize()];
 }
 
