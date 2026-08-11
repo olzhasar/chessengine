@@ -16,7 +16,8 @@ pub fn main(init: std.process.Init) !void {
     var buffer: [1024]u8 = undefined;
     var reader = stdin.reader(io, &buffer);
 
-    var game = lib.Game.new();
+    var game = lib.Game.new(init.gpa);
+    defer game.deinit();
 
     const game_mode = promptGameMode(&reader.interface);
     var player_color: lib.Color = undefined;
@@ -70,7 +71,7 @@ pub fn main(init: std.process.Init) !void {
             const side = game.sideToMove();
 
             std.debug.print("{s} is thinking...\n", .{@tagName(side)});
-            const move = game.goEngine(ENGINE_DEPTH);
+            const move = try game.goEngine(ENGINE_DEPTH);
             std.debug.print("{s} played: {s}\n", .{ @tagName(side), move.str() });
         }
     }

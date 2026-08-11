@@ -11,6 +11,7 @@ pub const GameError = board.GameError;
 
 pub const Game = struct {
     position: board.Position,
+    table: movegen.TranspositionTable,
 
     const GameStatus = enum {
         CHECKMATE,
@@ -20,10 +21,15 @@ pub const Game = struct {
         DRAW_50_RULE,
     };
 
-    pub fn new() Game {
+    pub fn new(alloc: std.mem.Allocator) Game {
         return .{
             .position = .start(),
+            .table = .init(alloc),
         };
+    }
+
+    pub fn deinit(self: *Game) void {
+        self.table.deinit();
     }
 
     pub fn status(self: *Game) GameStatus {
@@ -65,8 +71,8 @@ pub const Game = struct {
         return self.position.side_to_move;
     }
 
-    pub fn goEngine(self: *Game, depth: u8) Move {
-        const move = movegen.findBestMove(&self.position, depth);
+    pub fn goEngine(self: *Game, depth: u8) !Move {
+        const move = try movegen.findBestMove(&self.position, depth, &self.table);
         if (move == null) unreachable;
         self.position.apply(move.?);
 

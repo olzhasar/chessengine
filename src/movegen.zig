@@ -798,6 +798,8 @@ inline fn staticEval(pos: *const Position) i16 {
 
 fn movePriority(move: Move) i8 {
     if (move.move_type == .CAPTURE) {
+        // https://chessprogramming.org/MVV-LVA
+        // TODO: this should somehow account for protected pieces
         return pieceWorth(move.captured_piece.?) - pieceWorth(move.piece) + 10;
     }
 
@@ -811,7 +813,52 @@ fn moveCmp(ctx: void, lhs: Move, rhs: Move) bool {
     return movePriority(lhs) > movePriority(rhs);
 }
 
-fn minimax(pos: *const Position, depth: u8, a: ?i16, b: ?i16) i16 {
+// https://chessprogramming.org/Node_Types
+const EntryType = enum(u2) {
+    EXACT,
+    LOWERBOUND,
+    UPPERBOUND,
+};
+
+const TranspositionEntry = struct {
+    score: i16 = 0,
+    depth: u8,
+    best_move: ?Move = null,
+    entry_type: EntryType = .EXACT,
+};
+
+// https://chessprogramming.org/Transposition_Table
+pub const TranspositionTable = std.AutoHashMap(u64, TranspositionEntry);
+
+const MinimaxResult = struct {
+    score: i16,
+    best_move: ?Move = null,
+};
+
+fn minimax(pos: *const Position, depth: u8, a: ?i16, b: ?i16, table: *TranspositionTable) !MinimaxResult {
+    var alpha = a orelse std.math.minInt(i16);
+    var beta = b orelse std.math.maxInt(i16);
+
+    const existing = table.get(pos.hash);
+    if (existing != null and existing.?.depth >= depth) {
+        const ex = existing.?;
+        const existing_result = MinimaxResult{ .score = existing.?.score, .best_move = existing.?.best_move };
+
+        switch (ex.entry_type) {
+            .EXACT => return existing_result,
+            .LOWERBOUND => {
+                alpha = @max(alpha, ex.score);
+            },
+            .UPPERBOUND => {
+                beta = @min(beta, ex.score);
+            },
+        }
+
+        if (alpha >= beta) return existing_result;
+    }
+
+    var entry: TranspositionEntry = .{ .depth = depth };
+
     var move_list = MoveList{};
     findAll(pos, &move_list);
 
@@ -819,43 +866,46 @@ fn minimax(pos: *const Position, depth: u8, a: ?i16, b: ?i16) i16 {
 
     if (move_list.len == 0) {
         if (isInCheck(pos, pos.side_to_move)) {
-            return if (maximize) std.math.minInt(i16) else std.math.maxInt(i16);
+            entry.score = if (maximize) std.math.minInt(i16) else std.math.maxInt(i16);
+        } else entry.score = 0;
+    } else if (depth == 0) {
+        entry.score = staticEval(pos);
+    } else {
+        std.sort.insertion(Move, move_list.moves[0..move_list.len], {}, moveCmp);
+
+        entry.score = if (maximize) std.math.minInt(i16) else std.math.maxInt(i16);
+
+        for (0..move_list.len) |i| {
+            var pos_copy = pos.*;
+            const move = move_list.moves[i];
+            pos_copy.apply(move);
+
+            const current = try minimax(&pos_copy, depth - 1, alpha, beta, table);
+
+            if (maximize) {
+                if (entry.best_move == null or current.score > entry.score) {
+                    entry.score = current.score;
+                    entry.best_move = move;
+                }
+                alpha = @max(alpha, entry.score);
+            } else {
+                if (entry.best_move == null or current.score < entry.score) {
+                    entry.score = current.score;
+                    entry.best_move = move;
+                }
+                beta = @min(beta, entry.score);
+            }
+
+            if (alpha >= beta) {
+                entry.entry_type = if (maximize) .LOWERBOUND else .UPPERBOUND;
+                break;
+            }
         }
-        return 0;
     }
 
-    if (pos.isRepetition(2)) return 0;
-    if (pos.half_move_counter >= 100) return 0;
+    try table.put(pos.hash, entry);
 
-    if (depth == 0) {
-        return staticEval(pos);
-    }
-
-    std.sort.insertion(Move, move_list.moves[0..move_list.len], {}, moveCmp);
-
-    var alpha = a orelse std.math.minInt(i16);
-    var beta = b orelse std.math.maxInt(i16);
-
-    var result: i16 = if (maximize) std.math.minInt(i16) else std.math.maxInt(i16);
-
-    for (0..move_list.len) |i| {
-        var pos_copy = pos.*;
-        pos_copy.apply(move_list.moves[i]);
-
-        const current = minimax(&pos_copy, depth - 1, alpha, beta);
-
-        if (maximize) {
-            result = @max(result, current);
-            alpha = @max(alpha, result);
-        } else {
-            result = @min(result, current);
-            beta = @min(beta, result);
-        }
-
-        if (alpha >= beta) break;
-    }
-
-    return result;
+    return MinimaxResult{ .score = entry.score, .best_move = entry.best_move };
 }
 
 test "minimax_static" {
@@ -879,7 +929,12 @@ test "minimax_static" {
     pos.put(.Black, .Queen, .d8);
     pos.put(.Black, .Pawn, .e7);
 
-    try t.expectEqual(4, minimax(&pos, 0, null, null));
+    var table: TranspositionTable = .init(t.allocator);
+    defer table.deinit();
+
+    const result = try minimax(&pos, 0, null, null, &table);
+
+    try t.expectEqual(4, result.score);
 }
 
 test "minimax_stalemate" {
@@ -890,12 +945,23 @@ test "minimax_stalemate" {
     pos.put(.White, .King, .g6);
     pos.put(.White, .Queen, .f7);
 
-    try t.expectEqual(0, minimax(&pos, 0, null, null));
-    try t.expectEqual(0, minimax(&pos, 1, null, null));
+    var table: TranspositionTable = .init(t.allocator);
+    defer table.deinit();
+
+    const result = try minimax(&pos, 0, null, null, &table);
+    try t.expectEqual(0, result.score);
+
+    table.clearRetainingCapacity();
+
+    const result_2 = try minimax(&pos, 1, null, null, &table);
+    try t.expectEqual(0, result_2.score);
 }
 
 test "minimax_checkmate" {
     const checkmate_score = std.math.maxInt(i16);
+
+    var table: TranspositionTable = .init(t.allocator);
+    defer table.deinit();
 
     {
         // checkmate
@@ -906,8 +972,13 @@ test "minimax_checkmate" {
         pos.put(.White, .Queen, .g7);
         pos.put(.White, .King, .f6);
 
-        try t.expectEqual(checkmate_score, minimax(&pos, 0, null, null));
-        try t.expectEqual(checkmate_score, minimax(&pos, 1, null, null));
+        const result = try minimax(&pos, 0, null, null, &table);
+        try t.expectEqual(checkmate_score, result.score);
+
+        table.clearRetainingCapacity();
+
+        const result_2 = try minimax(&pos, 1, null, null, &table);
+        try t.expectEqual(checkmate_score, result_2.score);
     }
 
     {
@@ -919,43 +990,27 @@ test "minimax_checkmate" {
         pos.put(.White, .Queen, .g1);
         pos.put(.White, .King, .f6);
 
-        try t.expectEqual(checkmate_score, minimax(&pos, 1, null, null));
+        table.clearRetainingCapacity();
+        const result = try minimax(&pos, 1, null, null, &table);
+        try t.expectEqual(checkmate_score, result.score);
     }
 }
 
-pub fn findBestMove(pos: *const Position, depth: u8) ?Move {
+pub fn findBestMove(pos: *const Position, depth: u8, table: *TranspositionTable) !?Move {
     assert(depth > 0);
 
-    var move_list = MoveList{};
-    findAll(pos, &move_list);
-    if (move_list.len == 0) return null;
-
-    const maximize: bool = (pos.side_to_move == .White);
-
-    var best_score: i16 = if (maximize) std.math.minInt(i16) else std.math.maxInt(i16);
-    var best_move: ?Move = null;
-
-    for (0..move_list.len) |i| {
-        var pos_copy = pos.*;
-        pos_copy.apply(move_list.moves[i]);
-
-        const current = minimax(&pos_copy, depth - 1, null, null);
-
-        if (best_move == null or (maximize and current > best_score) or (!maximize and current < best_score)) {
-            best_move = move_list.moves[i];
-            best_score = current;
-            continue;
-        }
-    }
-
-    return best_move;
+    const result = try minimax(pos, depth, null, null, table);
+    return result.best_move;
 }
 
 test "find_best_move" {
     // scholars mate in one
     var pos = try Position.fromFEN("rnbqkbnr/pp3ppp/2pp4/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 0 4");
 
-    const best_move = findBestMove(&pos, 1);
+    var table: TranspositionTable = .init(t.allocator);
+    defer table.deinit();
+
+    const best_move = try findBestMove(&pos, 1, &table);
 
     try t.expectEqual(Square.f7, best_move.?.to);
     try t.expectEqual(Square.f3, best_move.?.from);
