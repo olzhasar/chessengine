@@ -12,6 +12,8 @@ pub const GameError = board.GameError;
 pub const Game = struct {
     position: board.Position,
     table: movegen.TranspositionTable,
+    history: [101]u64 = @splat(0),
+    history_len: u8 = 0,
 
     const GameStatus = enum {
         CHECKMATE,
@@ -22,10 +24,14 @@ pub const Game = struct {
     };
 
     pub fn new(alloc: std.mem.Allocator) Game {
-        return .{
+        var game = Game{
             .position = .start(),
             .table = .init(alloc),
         };
+
+        game.saveHash();
+
+        return game;
     }
 
     pub fn deinit(self: *Game) void {
@@ -34,7 +40,7 @@ pub const Game = struct {
 
     pub fn status(self: *Game) GameStatus {
         if (self.position.half_move_counter >= 100) return .DRAW_50_RULE;
-        if (self.position.isRepetition(3)) return .DRAW_BY_REPETITION;
+        if (self.isRepetition(3)) return .DRAW_BY_REPETITION;
 
         var move_list = movegen.MoveList{};
         movegen.findAll(&self.position, &move_list);
@@ -45,6 +51,20 @@ pub const Game = struct {
         }
 
         return .ONGOING;
+    }
+
+    pub fn isRepetition(self: *const Game, limit: u8) bool {
+        assert(limit >= 1);
+
+        var counter: u8 = 0;
+
+        var i: usize = 2;
+        while (i < self.history_len) : (i += 2) {
+            if (self.history[self.history_len - 1] == self.history[self.history_len - 1 - i]) counter += 1;
+            if (counter >= (limit - 1)) return true;
+        }
+
+        return false;
     }
 
     pub fn printLegalMoves(self: *Game) void {
@@ -60,11 +80,24 @@ pub const Game = struct {
         self.position.print();
     }
 
+    fn makeMove(self: *Game, move: Move) void {
+        self.position.apply(move);
+        if (move.piece == .Pawn or move.move_type != .NORMAL) {
+            self.history_len = 0;
+        }
+        self.saveHash();
+    }
+
+    fn saveHash(self: *Game) void {
+        self.history[self.history_len] = self.position.hash;
+        self.history_len += 1;
+    }
+
     pub fn go(self: *Game, input: []const u8) !void {
         const move = try self.position.parseMove(input);
         if (!movegen.isMoveLegal(&self.position, move)) return GameError.IllegalMove;
 
-        self.position.apply(move);
+        self.makeMove(move);
     }
 
     pub fn sideToMove(self: *Game) Color {
@@ -74,8 +107,19 @@ pub const Game = struct {
     pub fn goEngine(self: *Game, depth: u8) !Move {
         const move = try movegen.findBestMove(&self.position, depth, &self.table);
         if (move == null) unreachable;
-        self.position.apply(move.?);
+        self.makeMove(move.?);
 
         return move.?;
     }
 };
+
+test "threefold repetition" {
+    var game = Game.new(t.allocator);
+    const moves = [_][]const u8{ "g1f3", "g8f6", "f3g1", "f6g8" };
+
+    for (moves) |m| try game.go(m);
+    try t.expect(!game.isRepetition(3));
+
+    for (moves) |m| try game.go(m);
+    try t.expect(game.isRepetition(3));
+}

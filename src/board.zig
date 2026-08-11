@@ -271,8 +271,6 @@ pub const Position = struct {
     side_to_move: Color,
     en_passant_targets: Bitboard = 0,
 
-    history: [101]u64 = @splat(0),
-    history_len: u8 = 0,
     hash: u64 = 0,
     half_move_counter: u8 = 0,
 
@@ -502,31 +500,10 @@ pub const Position = struct {
 
         // is the move irreversible
         if (move.piece == .Pawn or move.move_type != .NORMAL) {
-            self.history_len = 0;
             self.half_move_counter = 0;
         } else {
             self.half_move_counter += 1;
         }
-        self.saveHash();
-    }
-
-    fn saveHash(self: *Position) void {
-        self.history[self.history_len] = self.hash;
-        self.history_len += 1;
-    }
-
-    pub fn isRepetition(self: *const Position, limit: u8) bool {
-        assert(limit >= 1);
-
-        var counter: u8 = 0;
-
-        var i: usize = 2;
-        while (i < self.history_len) : (i += 2) {
-            if (self.history[self.history_len - 1] == self.history[self.history_len - 1 - i]) counter += 1;
-            if (counter >= (limit - 1)) return true;
-        }
-
-        return false;
     }
 
     pub fn start() Position {
@@ -553,7 +530,6 @@ pub const Position = struct {
         };
 
         pos.hash = pos.calculateHash();
-        pos.saveHash();
 
         return pos;
     }
@@ -691,7 +667,6 @@ pub const Position = struct {
         }
 
         pos.hash = pos.calculateHash();
-        pos.saveHash();
 
         return pos;
     }
@@ -972,17 +947,6 @@ test "incremental hash matches full hash" {
         try repeated_rook_move.go(move);
         try t.expectEqual(position.hash, position.calculateHash());
     }
-}
-
-test "threefold repetition" {
-    var pos = Position.start();
-    const moves = [_][]const u8{ "g1f3", "g8f6", "f3g1", "f6g8" };
-
-    for (moves) |m| try pos.go(m);
-    try t.expect(!pos.isRepetition(3));
-
-    for (moves) |m| try pos.go(m);
-    try t.expect(pos.isRepetition(3));
 }
 
 fn print_bitboard(board: Bitboard) void {
