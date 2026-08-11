@@ -172,9 +172,11 @@ pub const MoveType = enum {
 };
 
 pub const Move = struct {
+    piece: Piece,
     from: Square,
     to: Square,
     move_type: MoveType = .NORMAL,
+    captured_piece: ?Piece = null,
     promotion_piece: ?Piece = null,
 
     pub fn str(self: Move) [4]u8 {
@@ -305,15 +307,18 @@ pub const Position = struct {
 
         if (input.len < 4 or input.len > 5) return GameError.InvalidMove;
 
-        var move: Move = .{
-            .from = std.meta.stringToEnum(Square, input[0..2]) orelse return GameError.InvalidMove,
-            .to = std.meta.stringToEnum(Square, input[2..4]) orelse return GameError.InvalidMove,
-        };
-        if (move.from.mask() & occupied_self == 0) return GameError.InvalidMove;
-        if (move.to.mask() & occupied_self != 0) return GameError.InvalidMove;
+        const from = std.meta.stringToEnum(Square, input[0..2]) orelse return GameError.InvalidMove;
+        const to = std.meta.stringToEnum(Square, input[2..4]) orelse return GameError.InvalidMove;
+        if (from.mask() & occupied_self == 0) return GameError.InvalidMove;
+        if (to.mask() & occupied_self != 0) return GameError.InvalidMove;
 
-        const piece = self.getPieceAt(move.from).?;
-        if (piece == .King) {
+        var move: Move = .{
+            .piece = self.getPieceAt(from).?,
+            .from = from,
+            .to = to,
+        };
+
+        if (move.piece == .King) {
             if (input.len != 4) return GameError.InvalidMove;
             switch (self.side_to_move) {
                 .White => {
@@ -327,10 +332,15 @@ pub const Position = struct {
                     }
                 },
             }
-        } else if (move.to.mask() & occupied_enemy != 0 or move.to.mask() & self.en_passant_targets != 0) {
+        } else if (move.to.mask() & occupied_enemy != 0) {
             if (input.len != 4) return GameError.InvalidMove;
+            move.captured_piece = self.getPieceAtForSide(move.to, self.sideEnemy()).?;
             move.move_type = .CAPTURE;
-        } else if (piece == .Pawn and move.to.rank() == self.side_to_move.end_rank()) {
+        } else if (move.to.mask() & self.en_passant_targets != 0) {
+            if (input.len != 4) return GameError.InvalidMove;
+            move.captured_piece = .Pawn;
+            move.move_type = .CAPTURE;
+        } else if (move.piece == .Pawn and move.to.rank() == self.side_to_move.end_rank()) {
             if (input.len != 5) return GameError.InvalidMove;
             move.promotion_piece = switch (input[4]) {
                 'q' => .Queen,
@@ -384,26 +394,15 @@ pub const Position = struct {
 
         self.resetEnPassantTargets(self.side_to_move);
 
-        var piece: Piece = undefined;
+        self.piece_boards[self.side_to_move.idx()][move.piece.idx()] ^= from_mask;
+        self.hash ^= ZOBRIST_TABLE.piece_boards[self.side_to_move.idx()][move.piece.idx()][move.from.as_usize()];
 
-        inline for (std.enums.values(Piece)) |p| {
-            const bitmask = &self.piece_boards[self.side_to_move.idx()][p.idx()];
+        if (move.promotion_piece == null) {
+            self.piece_boards[self.side_to_move.idx()][move.piece.idx()] |= to_mask;
+            self.hash ^= ZOBRIST_TABLE.piece_boards[self.side_to_move.idx()][move.piece.idx()][move.to.as_usize()];
+        }
 
-            if (bitmask.* & from_mask != 0) {
-                bitmask.* ^= from_mask;
-                self.hash ^= ZOBRIST_TABLE.piece_boards[self.side_to_move.idx()][p.idx()][move.from.as_usize()];
-
-                if (move.promotion_piece == null) {
-                    bitmask.* |= to_mask;
-                    self.hash ^= ZOBRIST_TABLE.piece_boards[self.side_to_move.idx()][p.idx()][move.to.as_usize()];
-                }
-                piece = p;
-
-                break;
-            }
-        } else unreachable;
-
-        switch (piece) {
+        switch (move.piece) {
             .Pawn => {
                 // en passant
                 if (@abs(@as(i8, move.to.rank()) - @as(i8, move.from.rank())) == 2) {
@@ -420,23 +419,15 @@ pub const Position = struct {
                 self.revokeCastlingRight(self.side_to_move, .long);
                 self.revokeCastlingRight(self.side_to_move, .short);
             },
+            .Rook => {
+                self.revokeCastlingRightAt(move.from);
+            },
             else => {},
         }
 
-        self.revokeCastlingRightAt(move.to);
-        self.revokeCastlingRightAt(move.from);
-
         switch (move.move_type) {
             .CAPTURE => {
-                for (std.enums.values(Piece)) |p| {
-                    const bitmask = &self.piece_boards[self.sideEnemy().idx()][p.idx()];
-                    if (bitmask.* & to_mask != 0) {
-                        bitmask.* ^= to_mask;
-                        self.hash ^= ZOBRIST_TABLE.piece_boards[self.sideEnemy().idx()][p.idx()][@ctz(to_mask)];
-
-                        break;
-                    }
-                } else if (self.en_passant_targets & move.to.mask() != 0) {
+                if (self.en_passant_targets & move.to.mask() != 0) {
                     // en passant
                     const pawn_to_capture = switch (self.side_to_move) {
                         .White => move.to.rel(0, -1),
@@ -446,7 +437,15 @@ pub const Position = struct {
                     assert(self.piece_boards[self.sideEnemy().idx()][Piece.Pawn.idx()] & pawn_to_capture.?.mask() != 0);
                     self.piece_boards[self.sideEnemy().idx()][Piece.Pawn.idx()] ^= pawn_to_capture.?.mask();
                     self.hash ^= ZOBRIST_TABLE.piece_boards[self.sideEnemy().idx()][Piece.Pawn.idx()][pawn_to_capture.?.as_usize()];
-                } else unreachable;
+                } else {
+                    assert(move.captured_piece != null);
+                    self.piece_boards[self.sideEnemy().idx()][move.captured_piece.?.idx()] ^= to_mask;
+                    self.hash ^= ZOBRIST_TABLE.piece_boards[self.sideEnemy().idx()][move.captured_piece.?.idx()][@ctz(to_mask)];
+
+                    if (move.captured_piece.? == .Rook) {
+                        self.revokeCastlingRightAt(move.to);
+                    }
+                }
             },
             .CASTLE => {
                 var old_rook_square: Square = undefined;
@@ -502,7 +501,7 @@ pub const Position = struct {
         self.hash ^= ZOBRIST_TABLE.side_to_move;
 
         // is the move irreversible
-        if (piece == .Pawn or move.move_type != .NORMAL) {
+        if (move.piece == .Pawn or move.move_type != .NORMAL) {
             self.history_len = 0;
             self.half_move_counter = 0;
         } else {
@@ -603,11 +602,13 @@ pub const Position = struct {
         return result;
     }
 
-    fn getPieceAt(self: *const Position, square: Square) ?Piece {
-        for (0..2) |ci| {
-            for (std.enums.values(Piece)) |piece| {
-                if (self.piece_boards[ci][piece.idx()] & square.mask() != 0) return piece;
-            }
+    pub fn getPieceAt(self: *const Position, square: Square) ?Piece {
+        return self.getPieceAtForSide(square, .White) orelse self.getPieceAtForSide(square, .Black);
+    }
+
+    pub fn getPieceAtForSide(self: *const Position, square: Square, side: Color) ?Piece {
+        inline for (std.enums.values(Piece)) |piece| {
+            if (self.piece_boards[side.idx()][piece.idx()] & square.mask() != 0) return piece;
         }
 
         return null;
@@ -693,13 +694,9 @@ pub const Position = struct {
         pos.saveHash();
 
         return pos;
-
-        // TODO moves counters
     }
 
     pub fn calculateHash(self: *const Position) u64 {
-        // TODO: incremental updates
-
         var result: u64 = 0;
 
         for (0..2) |ci| {
@@ -739,7 +736,7 @@ pub const Position = struct {
 test "position_apply" {
     var pos = Position.start();
 
-    const move = Move{ .from = .e2, .to = .e4, .move_type = .NORMAL };
+    const move = Move{ .piece = .Pawn, .from = .e2, .to = .e4, .move_type = .NORMAL };
 
     try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask() != 0);
     try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask(), 0);
@@ -756,7 +753,7 @@ test "position_apply_capture" {
     pos.put(.White, .Pawn, .e4);
     pos.put(.Black, .Pawn, .d5);
 
-    const move = Move{ .from = .e4, .to = .d5, .move_type = .NORMAL };
+    const move = Move{ .piece = .Pawn, .from = .e4, .to = .d5, .move_type = .NORMAL };
 
     try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask() != 0);
     try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask(), 0);
@@ -773,7 +770,7 @@ test "position_apply_castle" {
     pos.put(.White, .King, .e1);
     pos.put(.White, .Rook, .h1);
 
-    const move = Move{ .from = .e1, .to = .g1, .move_type = .CASTLE };
+    const move = Move{ .piece = .King, .from = .e1, .to = .g1, .move_type = .CASTLE };
     pos.apply(move);
 
     try t.expect(pos.piece_boards[Color.White.idx()][Piece.King.idx()] & move.to.mask() != 0);

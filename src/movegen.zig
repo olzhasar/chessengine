@@ -18,12 +18,7 @@ pub const MoveList = struct {
     moves: [255]Move = undefined,
     len: u8 = 0,
 
-    fn append(self: *MoveList, from: Square, to: Square, move_type: MoveType) void {
-        self.moves[self.len] = .{ .from = from, .to = to, .move_type = move_type };
-        self.len += 1;
-    }
-
-    fn append_move(self: *MoveList, move: Move) void {
+    fn append(self: *MoveList, move: Move) void {
         self.moves[self.len] = move;
         self.len += 1;
     }
@@ -104,7 +99,7 @@ fn getEnPassantMoves(from: Square, side: Color, pos: *const Position, out: *Move
 
         if (target.?.mask() & pos.en_passant_targets != 0) {
             const temp_pos = pos.*;
-            const move = Move{ .from = from, .to = target.?, .move_type = .CAPTURE };
+            const move = Move{ .piece = .Pawn, .from = from, .to = target.?, .move_type = .CAPTURE };
             appendMoveIfLegal(move, &temp_pos, out);
         }
     }
@@ -130,7 +125,7 @@ fn getCastleMoves(from: Square, side: Color, pos: *const Position, occupied: Bit
         if (mask & occupied != 0) break :blk;
         if (isAttacked(mask, side.opp(), pos)) break :blk;
 
-        out.append(from, squares[1], .CASTLE);
+        out.append(.{ .piece = .King, .from = from, .to = squares[1], .move_type = .CASTLE });
     }
 
     if (pos.castling_rights.has(side, .long)) blk: {
@@ -144,7 +139,7 @@ fn getCastleMoves(from: Square, side: Color, pos: *const Position, occupied: Bit
         if ((mask | squares[2].mask()) & occupied != 0) break :blk;
         if (isAttacked(mask, side.opp(), pos)) break :blk; // only the king path should be free from checks
 
-        out.append(from, squares[1], .CASTLE);
+        out.append(.{ .piece = .King, .from = from, .to = squares[1], .move_type = .CASTLE });
     }
 }
 
@@ -163,7 +158,7 @@ inline fn appendMoveIfLegal(move: Move, pos: *const Position, out: *MoveList) vo
     var pos_copy = pos.*;
     pos_copy.apply(move);
 
-    if (!isInCheck(&pos_copy, pos.side_to_move)) out.append_move(move);
+    if (!isInCheck(&pos_copy, pos.side_to_move)) out.append(move);
 }
 
 fn findInner(
@@ -181,6 +176,7 @@ fn findInner(
 
     while (squares != 0) : (squares &= squares - 1) {
         const target = Square.from_int(@ctz(squares));
+        const captured_piece = pos.getPieceAtForSide(target, pos.sideEnemy());
 
         const mask = target.mask();
 
@@ -188,13 +184,13 @@ fn findInner(
             if ((pos.side_to_move == .White and target.rank() == 7) or (pos.side_to_move == .Black and target.rank() == 0)) {
                 inline for (PromotionPieces) |prom_piece| {
                     const move_type: MoveType = if (occupied_enemy & target.mask() != 0) .CAPTURE else .NORMAL;
-                    appendMoveIfLegal(.{ .from = from, .to = target, .promotion_piece = prom_piece, .move_type = move_type }, pos, out);
+                    appendMoveIfLegal(.{ .piece = piece, .from = from, .to = target, .promotion_piece = prom_piece, .move_type = move_type, .captured_piece = captured_piece }, pos, out);
                 }
                 continue;
             }
         }
         const move_type: MoveType = if (mask & occupied_enemy == 0) .NORMAL else .CAPTURE;
-        appendMoveIfLegal(.{ .from = from, .to = target, .move_type = move_type }, pos, out);
+        appendMoveIfLegal(.{ .piece = piece, .from = from, .to = target, .move_type = move_type, .captured_piece = captured_piece }, pos, out);
     }
 }
 
