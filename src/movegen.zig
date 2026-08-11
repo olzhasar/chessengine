@@ -99,7 +99,7 @@ fn getEnPassantMoves(from: Square, side: Color, pos: *const Position, out: *Move
 
         if (target.?.mask() & pos.en_passant_targets != 0) {
             const temp_pos = pos.*;
-            const move = Move{ .piece = .Pawn, .from = from, .to = target.?, .move_type = .CAPTURE };
+            const move = Move{ .piece = .Pawn, .from = from, .to = target.?, .move_type = .CAPTURE, .captured_piece = .Pawn };
             appendMoveIfLegal(move, &temp_pos, out);
         }
     }
@@ -771,20 +771,44 @@ pub fn isMoveLegal(pos: *const Position, move: Move) bool {
     return false;
 }
 
-fn count_pieces_score(piece_boards: [6]Bitboard) i16 {
+fn pieceWorth(piece: Piece) i8 {
+    return switch (piece) {
+        .Pawn => 1,
+        .Knight => 3,
+        .Bishop => 3,
+        .Rook => 5,
+        .Queen => 9,
+        .King => 0,
+    };
+}
+
+fn totalPiecesScore(piece_boards: [6]Bitboard) i16 {
     var score: i16 = 0;
 
-    score += @popCount(piece_boards[Piece.Pawn.idx()]);
-    score += @popCount(piece_boards[Piece.Knight.idx()]) * 3;
-    score += @popCount(piece_boards[Piece.Bishop.idx()]) * 3;
-    score += @popCount(piece_boards[Piece.Rook.idx()]) * 5;
-    score += @popCount(piece_boards[Piece.Queen.idx()]) * 9;
+    inline for (std.enums.values(Piece)) |piece| {
+        score += @popCount(piece_boards[piece.idx()]) * pieceWorth(piece);
+    }
 
     return score;
 }
 
-inline fn static_eval(pos: *const Position) i16 {
-    return count_pieces_score(pos.piece_boards[Color.White.idx()]) - count_pieces_score(pos.piece_boards[Color.Black.idx()]);
+inline fn staticEval(pos: *const Position) i16 {
+    return totalPiecesScore(pos.piece_boards[Color.White.idx()]) - totalPiecesScore(pos.piece_boards[Color.Black.idx()]);
+}
+
+fn movePriority(move: Move) i8 {
+    if (move.move_type == .CAPTURE) {
+        return pieceWorth(move.captured_piece.?) - pieceWorth(move.piece) + 10;
+    }
+
+    if (move.promotion_piece != null) return pieceWorth(move.promotion_piece.?);
+
+    return 0;
+}
+
+fn moveCmp(ctx: void, lhs: Move, rhs: Move) bool {
+    _ = ctx;
+    return movePriority(lhs) > movePriority(rhs);
 }
 
 fn minimax(pos: *const Position, depth: u8, a: ?i16, b: ?i16) i16 {
@@ -804,8 +828,10 @@ fn minimax(pos: *const Position, depth: u8, a: ?i16, b: ?i16) i16 {
     if (pos.half_move_counter >= 100) return 0;
 
     if (depth == 0) {
-        return static_eval(pos);
+        return staticEval(pos);
     }
+
+    std.sort.insertion(Move, move_list.moves[0..move_list.len], {}, moveCmp);
 
     var alpha = a orelse std.math.minInt(i16);
     var beta = b orelse std.math.maxInt(i16);
