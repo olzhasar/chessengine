@@ -165,7 +165,7 @@ pub const PromotionPieces = [_]Piece{
     Piece.Queen,
 };
 
-pub const MoveType = enum {
+pub const MoveType = enum(u2) {
     NORMAL,
     CAPTURE,
     CASTLE,
@@ -186,6 +186,11 @@ pub const Move = struct {
             self.to.file_str(),
             self.to.rank_str(),
         };
+    }
+
+    pub fn equals(self: Move, other: Move) bool {
+        // move_type and pieces can probably be omitted here
+        return (self.from == other.from and self.to == other.to and self.promotion_piece == other.promotion_piece);
     }
 };
 

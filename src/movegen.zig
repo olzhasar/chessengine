@@ -808,8 +808,12 @@ fn movePriority(move: Move) i8 {
     return 0;
 }
 
-fn moveCmp(ctx: void, lhs: Move, rhs: Move) bool {
-    _ = ctx;
+fn moveCmp(prior_best_move: ?Move, lhs: Move, rhs: Move) bool {
+    if (prior_best_move != null) {
+        if (prior_best_move.?.equals(lhs)) return true;
+        if (prior_best_move.?.equals(rhs)) return false;
+    }
+
     return movePriority(lhs) > movePriority(rhs);
 }
 
@@ -857,6 +861,8 @@ fn minimax(pos: *const Position, depth: u8, a: ?i16, b: ?i16, table: *Transposit
         if (alpha >= beta) return existing_result;
     }
 
+    const prior_best_move = if (existing != null) existing.?.best_move else null;
+
     var entry: TranspositionEntry = .{ .depth = depth };
 
     var move_list = MoveList{};
@@ -871,7 +877,7 @@ fn minimax(pos: *const Position, depth: u8, a: ?i16, b: ?i16, table: *Transposit
     } else if (depth == 0) {
         entry.score = staticEval(pos);
     } else {
-        std.sort.insertion(Move, move_list.moves[0..move_list.len], {}, moveCmp);
+        std.sort.insertion(Move, move_list.moves[0..move_list.len], prior_best_move, moveCmp);
 
         entry.score = if (maximize) std.math.minInt(i16) else std.math.maxInt(i16);
 
