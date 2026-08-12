@@ -35,7 +35,7 @@ pub fn build(b: *std.Build) void {
         // intend to expose to consumers that were defined in other files part
         // of this module, you will have to make sure to re-export them from
         // the root file.
-        .root_source_file = b.path("src/root.zig"),
+        .root_source_file = b.path("src/engine/root.zig"),
         // Later on we'll use this module as the root module of a test executable
         // which requires us to specify a target.
         .target = target,
@@ -127,7 +127,7 @@ pub fn build(b: *std.Build) void {
 
     const movegen_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/movegen.zig"),
+            .root_source_file = b.path("src/engine/movegen.zig"),
             .target = target,
             .optimize = optimize,
         }),
@@ -137,7 +137,7 @@ pub fn build(b: *std.Build) void {
 
     const perft_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/perft.zig"),
+            .root_source_file = b.path("src/engine/perft.zig"),
             .target = target,
             .optimize = optimize,
         }),
