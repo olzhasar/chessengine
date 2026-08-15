@@ -45,6 +45,13 @@ pub fn deinit(self: *Game) void {
     self.table.deinit();
 }
 
+pub fn setPosition(self: *Game, position: board.Position) void {
+    self.position = position;
+    self.history_len = 0;
+    self.table.clearRetainingCapacity();
+    self.saveHash();
+}
+
 pub fn status(self: *Game) GameStatus {
     if (self.position.half_move_counter >= 100) return .DRAW_50_RULE;
     if (self.isRepetition(3)) return .DRAW_BY_REPETITION;
@@ -121,6 +128,8 @@ pub fn goEngine(self: *Game, depth: u8) !Move {
 
 test "threefold repetition" {
     var game = Game.new(t.allocator);
+    defer game.deinit();
+
     const moves = [_][]const u8{ "g1f3", "g8f6", "f3g1", "f6g8" };
 
     for (moves) |m| try game.go(m);

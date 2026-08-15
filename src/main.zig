@@ -11,3 +11,8 @@ pub fn main(init: std.process.Init) !void {
 
     return uci.run(init);
 }
+
+test {
+    _ = @import("uci.zig");
+    _ = @import("terminal.zig");
+}
