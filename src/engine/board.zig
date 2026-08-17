@@ -351,20 +351,14 @@ pub const Position = struct {
             .to = to,
         };
 
-        if (move.piece == .King) {
+        const is_castle = move.piece == .King and switch (self.side_to_move) {
+            .White => move.from == Square.e1 and (move.to == Square.c1 or move.to == Square.g1),
+            .Black => move.from == Square.e8 and (move.to == Square.c8 or move.to == Square.g8),
+        };
+
+        if (is_castle) {
             if (input.len != 4) return GameError.InvalidMove;
-            switch (self.side_to_move) {
-                .White => {
-                    if (move.from == Square.e1) {
-                        if (move.to == Square.c1 or move.to == Square.g1) move.move_type = .CASTLE;
-                    }
-                },
-                .Black => {
-                    if (move.from == Square.e8) {
-                        if (move.to == Square.c8 or move.to == Square.g8) move.move_type = .CASTLE;
-                    }
-                },
-            }
+            move.move_type = .CASTLE;
         } else if (move.to.mask() & occupied_enemy != 0) {
             if (input.len != 4) return GameError.InvalidMove;
             move.captured_piece = self.getPieceAtForSide(move.to, self.sideEnemy()).?;
@@ -974,6 +968,35 @@ test "parse_move" {
     try t.expectEqualStrings("b7", &move.from.str());
     try t.expectEqualStrings("b8", &move.to.str());
     try t.expectEqual(Piece.Queen, move.promotion_piece);
+}
+
+test "parse_move castle" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, .e1);
+    pos.put(.White, .Rook, .a1);
+    pos.put(.White, .Rook, .h1);
+
+    const short = try pos.parseMove("e1c1");
+
+    try t.expectEqual(MoveType.CASTLE, short.move_type);
+    try t.expectEqual(Piece.King, short.piece);
+
+    const long = try pos.parseMove("e1g1");
+
+    try t.expectEqual(MoveType.CASTLE, long.move_type);
+    try t.expectEqual(Piece.King, long.piece);
+}
+
+test "parse_move king capture" {
+    var pos = Position.init(.Black);
+    pos.put(.Black, .King, .g5);
+    pos.put(.White, .Pawn, .f4);
+    pos.put(.White, .King, .g1);
+
+    const move = try pos.parseMove("g5f4");
+
+    try t.expectEqual(MoveType.CAPTURE, move.move_type);
+    try t.expectEqual(Piece.Pawn, move.captured_piece.?);
 }
 
 test "from_fen" {
