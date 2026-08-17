@@ -68,7 +68,7 @@ pub fn play(io: std.Io, alloc: std.mem.Allocator) !void {
             const side = game.sideToMove();
 
             std.debug.print("{s} is thinking...\n", .{@tagName(side)});
-            const move = try game.goEngine(engine_depth);
+            const move = (try game.goEngine(engine_depth)) orelse return error.NoMoves;
             std.debug.print("{s} played: {s}\n", .{ @tagName(side), move.uci(&uci_buf) });
         }
     }

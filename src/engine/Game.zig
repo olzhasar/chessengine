@@ -120,12 +120,16 @@ pub fn go(self: *Game, input: []const u8) !void {
     self.makeMove(move);
 }
 
-pub fn goEngine(self: *Game, depth: u8) !Move {
-    const move = try movegen.findBestMove(&self.position, depth, &self.table);
-    if (move == null) unreachable;
-    self.makeMove(move.?);
+pub fn findEngineMove(self: *Game, depth: u8) !?Move {
+    // TODO: add time limit support
+    return movegen.findBestMove(&self.position, depth, &self.table);
+}
 
-    return move.?;
+pub fn goEngine(self: *Game, depth: u8) !?Move {
+    const move = try self.findEngineMove(depth);
+    if (move) |best_move| self.makeMove(best_move);
+
+    return move;
 }
 
 test "threefold repetition" {
