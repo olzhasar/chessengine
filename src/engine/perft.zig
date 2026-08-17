@@ -36,7 +36,7 @@ test "perft" {
 }
 
 test "perft_2" {
-    const pos = try Position.fromFEN("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - ");
+    const pos = try Position.fromFEN("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
 
     try t.expectEqual(48, perft(pos, 1));
     try t.expectEqual(2039, perft(pos, 2));

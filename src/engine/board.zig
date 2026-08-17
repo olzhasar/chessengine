@@ -307,6 +307,7 @@ pub const Position = struct {
 
     hash: u64 = 0,
     half_move_counter: u8 = 0,
+    full_move_counter: u32 = 0,
 
     // the enemy (opposite) of the current side_to_move
     pub fn sideEnemy(self: *const Position) Color {
@@ -529,6 +530,8 @@ pub const Position = struct {
             self.hash ^= ZOBRIST_TABLE.piece_boards[self.side_to_move.idx()][move.promotion_piece.?.idx()][move.to.as_usize()];
         }
 
+        if (self.side_to_move == .Black) self.full_move_counter += 1;
+
         self.side_to_move = self.side_to_move.opp();
         self.hash ^= ZOBRIST_TABLE.side_to_move;
 
@@ -561,6 +564,7 @@ pub const Position = struct {
                 },
             },
             .side_to_move = Color.White,
+            .full_move_counter = 1,
         };
 
         pos.hash = pos.calculateHash();
@@ -625,14 +629,26 @@ pub const Position = struct {
     }
 
     pub fn fromFEN(input: []const u8) !Position {
+        var fields: [6][]const u8 = undefined;
+        var field_count: usize = 0;
+        var tokens = std.mem.tokenizeAny(u8, input, " \t\r\n");
+        while (tokens.next()) |field| {
+            if (field_count == fields.len) return GameError.InvalidFEN;
+            fields[field_count] = field;
+            field_count += 1;
+        }
+        if (field_count != fields.len) return GameError.InvalidFEN;
+
         var pos = Position.init(.White);
 
         var rank: u8 = 7;
         var idx: u8 = 0;
 
         var i: u8 = 0;
-        while (i < input.len and idx < 64) : (i += 1) {
-            const char = input[i];
+        while (i < fields[0].len and idx < 64) : (i += 1) {
+            if (idx >= 64) break;
+
+            const char = fields[0][i];
             if (char >= '1' and char <= '9') {
                 idx += char - '1' + 1;
                 continue;
@@ -669,29 +685,22 @@ pub const Position = struct {
 
             pos.piece_boards[color.idx()][piece.idx()] |= square.mask();
             idx += 1;
-            if (idx >= 64) break;
         }
 
         // side to move
+        if (fields[1].len != 1) return GameError.InvalidFEN;
 
-        i += 1;
-        while (input[i] == ' ') i += 1;
-
-        pos.side_to_move = switch (input[i]) {
+        pos.side_to_move = switch (fields[1][0]) {
             'w' => .White,
             'b' => .Black,
-            else => {
-                std.debug.print("i: {}, char: {d}\n", .{ i, input[i] });
-                return GameError.InvalidFEN;
-            },
+            else => return GameError.InvalidFEN,
         };
-
-        i += 2;
 
         pos.castling_rights.bits = 0;
 
-        while (i < input.len) : (i += 1) {
-            switch (input[i]) {
+        i = 0;
+        while (i < fields[2].len) : (i += 1) {
+            switch (fields[2][i]) {
                 'k' => pos.castling_rights.grant(.Black, .short),
                 'q' => pos.castling_rights.grant(.Black, .long),
                 'K' => pos.castling_rights.grant(.White, .short),
@@ -699,6 +708,17 @@ pub const Position = struct {
                 else => break,
             }
         }
+
+        // en passant target
+        if (fields[3].len == 2) {
+            const target = std.meta.stringToEnum(Square, fields[3]) orelse return GameError.InvalidFEN;
+            pos.en_passant_targets |= target.mask();
+        } else if (fields[3].len != 1 or fields[3][0] != '-') return GameError.InvalidFEN;
+
+        pos.half_move_counter = std.fmt.parseInt(u8, fields[4], 10) catch return GameError.InvalidFEN;
+        pos.full_move_counter = std.fmt.parseInt(u32, fields[5], 10) catch return GameError.InvalidFEN;
+
+        if (pos.full_move_counter == 0) return GameError.InvalidFEN;
 
         pos.hash = pos.calculateHash();
 
@@ -787,6 +807,33 @@ test "position_apply_castle" {
 
     try t.expect(pos.piece_boards[Color.White.idx()][Piece.Rook.idx()] & Square.f1.mask() != 0);
     try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Rook.idx()] & Square.h1.mask(), 0);
+}
+
+test "position_apply_move_counters" {
+    var pos = Position.start();
+
+    try t.expectEqual(1, pos.full_move_counter);
+    try t.expectEqual(0, pos.half_move_counter);
+
+    try pos.go("e2e4");
+
+    try t.expectEqual(1, pos.full_move_counter);
+    try t.expectEqual(0, pos.half_move_counter);
+
+    try pos.go("d7d5");
+
+    try t.expectEqual(2, pos.full_move_counter);
+    try t.expectEqual(0, pos.half_move_counter);
+
+    try pos.go("b1c3");
+
+    try t.expectEqual(2, pos.full_move_counter);
+    try t.expectEqual(1, pos.half_move_counter);
+
+    try pos.go("b8c6");
+
+    try t.expectEqual(3, pos.full_move_counter);
+    try t.expectEqual(2, pos.half_move_counter);
 }
 
 test "position_apply_en_passant_push" {
@@ -930,7 +977,7 @@ test "parse_move" {
 }
 
 test "from_fen" {
-    const pos = try Position.fromFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    const pos = try Position.fromFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 3 10");
     const start = Position.start();
 
     for (0..2) |ci| {
@@ -938,6 +985,15 @@ test "from_fen" {
             try t.expectEqual(start.piece_boards[ci][piece.idx()], pos.piece_boards[ci][piece.idx()]);
         }
     }
+
+    try t.expectEqual(3, pos.half_move_counter);
+    try t.expectEqual(10, pos.full_move_counter);
+}
+
+test "from_fen_en_passant" {
+    const pos = try Position.fromFEN("rnbqkbnr/pppppppp/8/8/4p3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1");
+
+    try t.expectEqual(Square.e3.mask(), pos.en_passant_targets);
 }
 
 test "hash" {
