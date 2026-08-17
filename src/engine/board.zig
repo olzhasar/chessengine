@@ -369,7 +369,7 @@ pub const Position = struct {
             if (input.len != 4) return GameError.InvalidMove;
             move.captured_piece = self.getPieceAtForSide(move.to, self.sideEnemy()).?;
             move.move_type = .CAPTURE;
-        } else if (move.to.mask() & self.en_passant_targets != 0) {
+        } else if (move.piece == .Pawn and move.to.mask() & self.en_passant_targets != 0) {
             if (input.len != 4) return GameError.InvalidMove;
             move.captured_piece = .Pawn;
             move.move_type = .CAPTURE;
