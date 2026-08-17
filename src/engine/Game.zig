@@ -85,8 +85,10 @@ fn printLegalMoves(self: *Game) void {
     var move_list: movegen.MoveList = .{};
     movegen.findAll(&self.position, &move_list);
 
+    var buffer: [5]u8 = undefined;
+
     for (0..move_list.len) |i| {
-        std.debug.print("{s}\n", .{move_list.moves[i].str()});
+        std.debug.print("{s}\n", .{move_list.moves[i].uci(&buffer)});
     }
 }
 

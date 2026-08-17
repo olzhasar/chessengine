@@ -153,6 +153,16 @@ pub const Piece = enum(u3) {
         };
     }
 
+    fn char(self: Piece) u8 {
+        return switch (self) {
+            .Knight => 'n',
+            .Bishop => 'b',
+            .Rook => 'r',
+            .Queen => 'q',
+            else => unreachable,
+        };
+    }
+
     pub fn idx(self: Piece) usize {
         return @intFromEnum(self);
     }
@@ -179,18 +189,37 @@ pub const Move = struct {
     captured_piece: ?Piece = null,
     promotion_piece: ?Piece = null,
 
-    pub fn str(self: Move) [4]u8 {
-        return [4]u8{
-            self.from.file_str(),
-            self.from.rank_str(),
-            self.to.file_str(),
-            self.to.rank_str(),
-        };
+    pub fn uci(self: Move, buffer: *[5]u8) []const u8 {
+        buffer[0] = self.from.file_str();
+        buffer[1] = self.from.rank_str();
+        buffer[2] = self.to.file_str();
+        buffer[3] = self.to.rank_str();
+
+        if (self.promotion_piece == null) return buffer[0..4];
+
+        buffer[4] = self.promotion_piece.?.char();
+        return buffer[0..5];
     }
 
     pub fn equals(self: Move, other: Move) bool {
         // move_type and pieces can probably be omitted here
         return (self.from == other.from and self.to == other.to and self.promotion_piece == other.promotion_piece);
+    }
+
+    pub fn equalsUci(self: Move, val: []const u8) bool {
+        if (val.len != 4 and val.len != 5) std.debug.panic("invalid uci: {s}\n", .{val});
+
+        if (!std.mem.eql(u8, val[0..2], &self.from.str())) return false;
+        if (!std.mem.eql(u8, val[2..4], &self.to.str())) return false;
+
+        if (self.promotion_piece != null) {
+            if (val.len != 5) return false;
+            if (val[4] != self.promotion_piece.?.char()) return false;
+        } else if (val.len != 4) {
+            return false;
+        }
+
+        return true;
     }
 };
 

@@ -23,9 +23,9 @@ pub const MoveList = struct {
         self.len += 1;
     }
 
-    fn has(self: *MoveList, str: []const u8, move_type: MoveType) bool {
+    fn has(self: *MoveList, uci: []const u8, move_type: MoveType) bool {
         for (0..self.len) |i| {
-            if (std.mem.eql(u8, &self.moves[i].str(), str)) {
+            if (self.moves[i].equalsUci(uci)) {
                 assert(self.moves[i].move_type == move_type);
                 return true;
             }
@@ -55,9 +55,10 @@ pub const MoveList = struct {
     }
 
     fn print(self: *const MoveList) void {
+        var buffer: [5]u8 = undefined;
         for (0..self.len) |i| {
             const move = self.moves[i];
-            std.debug.print("{s}\n", .{move.str()});
+            std.debug.print("{s}\n", .{move.uci(&buffer)});
         }
     }
 
@@ -216,8 +217,8 @@ test "pawn_moves" {
     findForPiece(.Pawn, square, &pos, &move_list);
     try t.expectEqual(2, move_list.len);
 
-    try t.expectEqualStrings(&move_list.moves[0].str(), "e2e3");
-    try t.expectEqualStrings(&move_list.moves[1].str(), "e2e4");
+    try t.expect(move_list.moves[0].equalsUci("e2e3"));
+    try t.expect(move_list.moves[1].equalsUci("e2e4"));
 }
 
 test "pawn_step_starting" {
@@ -302,9 +303,8 @@ test "pawn_promotions" {
     for (0..move_list.len) |i| {
         const move = move_list.moves[i];
         try t.expect(move.promotion_piece != null);
-        try t.expectEqualStrings("e7e8", &move.str());
-        try t.expectEqualStrings("e8", &move.to.str());
-        try t.expectEqualStrings("e7", &move.from.str());
+        try t.expectEqual(Square.e7, move.from);
+        try t.expectEqual(Square.e8, move.to);
     }
 }
 

@@ -23,6 +23,8 @@ pub fn play(io: std.Io, alloc: std.mem.Allocator) !void {
     var game = engine.Game.new(alloc);
     defer game.deinit();
 
+    var uci_buf: [5]u8 = undefined;
+
     while (true) {
         game.drawBoard();
 
@@ -67,7 +69,7 @@ pub fn play(io: std.Io, alloc: std.mem.Allocator) !void {
 
             std.debug.print("{s} is thinking...\n", .{@tagName(side)});
             const move = try game.goEngine(engine_depth);
-            std.debug.print("{s} played: {s}\n", .{ @tagName(side), move.str() });
+            std.debug.print("{s} played: {s}\n", .{ @tagName(side), move.uci(&uci_buf) });
         }
     }
 }
