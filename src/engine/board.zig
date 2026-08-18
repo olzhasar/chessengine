@@ -359,15 +359,18 @@ pub const Position = struct {
         if (is_castle) {
             if (input.len != 4) return GameError.InvalidMove;
             move.move_type = .CASTLE;
-        } else if (move.to.mask() & occupied_enemy != 0) {
-            if (input.len != 4) return GameError.InvalidMove;
+            return move;
+        }
+
+        if (move.to.mask() & occupied_enemy != 0) {
             move.captured_piece = self.getPieceAtForSide(move.to, self.sideEnemy()).?;
             move.move_type = .CAPTURE;
         } else if (move.piece == .Pawn and move.to.mask() & self.en_passant_targets != 0) {
-            if (input.len != 4) return GameError.InvalidMove;
             move.captured_piece = .Pawn;
             move.move_type = .CAPTURE;
-        } else if (move.piece == .Pawn and move.to.rank() == self.side_to_move.end_rank()) {
+        }
+
+        if (move.piece == .Pawn and move.to.rank() == self.side_to_move.end_rank()) {
             if (input.len != 5) return GameError.InvalidMove;
             move.promotion_piece = switch (input[4]) {
                 'q' => .Queen,
@@ -968,6 +971,16 @@ test "parse_move" {
     try t.expectEqualStrings("b7", &move.from.str());
     try t.expectEqualStrings("b8", &move.to.str());
     try t.expectEqual(Piece.Queen, move.promotion_piece);
+
+    var black_pos = Position.init(.Black);
+    black_pos.put(.Black, .Pawn, .b2);
+    black_pos.put(.White, .Knight, .c1);
+
+    move = try black_pos.parseMove("b2c1r");
+
+    try t.expectEqual(MoveType.CAPTURE, move.move_type);
+    try t.expectEqual(Piece.Knight, move.captured_piece);
+    try t.expectEqual(Piece.Rook, move.promotion_piece);
 }
 
 test "parse_move castle" {
