@@ -182,10 +182,13 @@ fn findInner(
     occupied_enemy: Bitboard,
     out: *MoveList,
     stop_at_first: bool,
+    captures_only: bool,
 ) void {
     var squares = getMoveSquares(piece, from, pos, occupied, occupied_self, occupied_enemy);
+    if (captures_only) squares &= occupied_enemy;
+
     if (piece == .Pawn and getEnPassantMoves(from, pos.side_to_move, pos, out) and stop_at_first) return;
-    if (piece == .King and getCastleMoves(from, pos.side_to_move, pos, occupied, out) and stop_at_first) return;
+    if (!captures_only and piece == .King and getCastleMoves(from, pos.side_to_move, pos, occupied, out) and stop_at_first) return;
 
     while (squares != 0) : (squares &= squares - 1) {
         const target = Square.from_int(@ctz(squares));
@@ -217,7 +220,7 @@ fn findForPiece(
     const occupied_self = pos.occupiedBy(pos.side_to_move);
     const occupied_enemy = pos.occupiedBy(pos.sideEnemy());
 
-    return findInner(piece, from, pos, occupied, occupied_self, occupied_enemy, out, false);
+    return findInner(piece, from, pos, occupied, occupied_self, occupied_enemy, out, false, false);
 }
 
 test "pawn_moves" {
@@ -581,7 +584,7 @@ test "castle_king_path_in_check" {
     try t.expect(move_list.has("e1c1", .CASTLE));
 }
 
-pub fn findAll(pos: *const Position, out: *MoveList) void {
+fn findAllInner(pos: *const Position, out: *MoveList, captures_only: bool) void {
     const occupied = pos.occupied();
     const occupied_self = pos.occupiedBy(pos.side_to_move);
     const occupied_enemy = pos.occupiedBy(pos.sideEnemy());
@@ -592,9 +595,49 @@ pub fn findAll(pos: *const Position, out: *MoveList) void {
         while (placements != 0) : (placements &= placements - 1) {
             const square = Square.from_int(@ctz(placements));
 
-            findInner(piece, square, pos, occupied, occupied_self, occupied_enemy, out, false);
+            findInner(piece, square, pos, occupied, occupied_self, occupied_enemy, out, false, captures_only);
         }
     }
+}
+
+pub fn findAll(pos: *const Position, out: *MoveList) void {
+    findAllInner(pos, out, false);
+}
+
+fn findCaptures(pos: *const Position, out: *MoveList) void {
+    findAllInner(pos, out, true);
+}
+
+test "find captures" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, .e1);
+    pos.put(.White, .Queen, .d4);
+    pos.put(.White, .Pawn, .e5);
+    pos.put(.Black, .King, .e8);
+    pos.put(.Black, .Rook, .d5);
+    pos.put(.Black, .Pawn, .f6);
+
+    var move_list = MoveList{};
+    findCaptures(&pos, &move_list);
+
+    try t.expectEqual(2, move_list.len);
+    try t.expect(move_list.has("d4d5", .CAPTURE));
+    try t.expect(move_list.has("e5f6", .CAPTURE));
+}
+
+test "find captures en passant" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, .e1);
+    pos.put(.White, .Pawn, .e5);
+    pos.put(.Black, .King, .e8);
+    pos.put(.Black, .Pawn, .d5);
+    pos.en_passant_targets = Square.d6.mask();
+
+    var move_list = MoveList{};
+    findCaptures(&pos, &move_list);
+
+    try t.expectEqual(1, move_list.len);
+    try t.expect(move_list.has("e5d6", .CAPTURE));
 }
 
 pub fn hasMoves(pos: *const Position) bool {
@@ -610,7 +653,7 @@ pub fn hasMoves(pos: *const Position) bool {
         while (placements != 0) : (placements &= placements - 1) {
             const square = Square.from_int(@ctz(placements));
 
-            findInner(piece, square, pos, occupied, occupied_self, occupied_enemy, &move_list, true);
+            findInner(piece, square, pos, occupied, occupied_self, occupied_enemy, &move_list, true, false);
             if (move_list.len > 0) return true;
         }
     }
@@ -878,6 +921,67 @@ inline fn gameOverScore(pos: *const Position, maximize: bool) i16 {
     } else return 0;
 }
 
+const QUIESCENCE_MAX_DEPTH: u8 = 8;
+
+// https://chessprogramming.org/Quiescence_Search
+fn quiescence(pos: *const Position, a: i16, b: i16, depth: u8) i16 {
+    var alpha = a;
+    var beta = b;
+
+    const maximize = pos.side_to_move == .White;
+
+    if (depth >= QUIESCENCE_MAX_DEPTH) {
+        if (!hasMoves(pos)) return gameOverScore(pos, maximize);
+        return staticEval(pos);
+    }
+
+    var move_list = MoveList{};
+    var score: i16 = undefined;
+
+    if (isInCheck(pos, pos.side_to_move)) {
+        findAll(pos, &move_list);
+        if (move_list.len == 0) return gameOverScore(pos, maximize);
+
+        score = if (maximize) std.math.minInt(i16) else std.math.maxInt(i16);
+    } else {
+        score = staticEval(pos);
+
+        findCaptures(pos, &move_list);
+        if (move_list.len == 0 and !hasMoves(pos)) return gameOverScore(pos, maximize);
+
+        if (maximize) {
+            if (score >= beta) return score;
+            alpha = @max(alpha, score);
+        } else {
+            if (score <= alpha) return score;
+            beta = @min(beta, score);
+        }
+
+        if (move_list.len == 0) return score;
+    }
+
+    std.sort.insertion(Move, move_list.moves[0..move_list.len], @as(?Move, null), moveCmp);
+
+    for (0..move_list.len) |i| {
+        var pos_copy = pos.*;
+        pos_copy.apply(move_list.moves[i]);
+
+        const current = quiescence(&pos_copy, alpha, beta, depth + 1);
+
+        if (maximize) {
+            score = @max(score, current);
+            alpha = @max(alpha, score);
+        } else {
+            score = @min(score, current);
+            beta = @min(beta, score);
+        }
+
+        if (alpha >= beta) break;
+    }
+
+    return score;
+}
+
 fn minimax(pos: *const Position, depth: u8, a: ?i16, b: ?i16, table: *TranspositionTable) !MinimaxResult {
     var alpha = a orelse std.math.minInt(i16);
     var beta = b orelse std.math.maxInt(i16);
@@ -900,19 +1004,15 @@ fn minimax(pos: *const Position, depth: u8, a: ?i16, b: ?i16, table: *Transposit
         if (alpha >= beta) return existing_result;
     }
 
+    if (depth == 0) return MinimaxResult{ .score = quiescence(pos, alpha, beta, 0) };
+
     const prior_best_move = if (existing != null) existing.?.best_move else null;
 
-    var entry: TranspositionEntry = .{ .depth = depth };
+    var entry: TranspositionEntry = .{ .depth = depth, .entry_type = .EXACT };
 
     const maximize: bool = (pos.side_to_move == .White);
 
-    if (depth == 0) {
-        if (!hasMoves(pos)) {
-            entry.score = gameOverScore(pos, maximize);
-        } else {
-            entry.score = staticEval(pos);
-        }
-    } else blk: {
+    blk: {
         var move_list = MoveList{};
         findAll(pos, &move_list);
 
