@@ -123,10 +123,11 @@ fn nextInstruction(reader: *Io.Reader) ?Instruction {
 pub fn run(init: std.process.Init) !void {
     const stdin = std.Io.File.stdin();
 
-    var buffer: [1024]u8 = undefined;
-    var stdin_reader = stdin.reader(init.io, &buffer);
+    // FIXME: this should allocate instead as move sequences can go quite deep
+    var stdin_buffer: [4096]u8 = undefined;
+    var stdin_reader = stdin.reader(init.io, &stdin_buffer);
 
-    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_buffer: [4096]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(init.io, &stdout_buffer);
 
     var game: engine.Game = engine.Game.new(init.gpa);
