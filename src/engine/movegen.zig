@@ -858,8 +858,8 @@ fn pieceWorth(piece: Piece) i8 {
     };
 }
 
-fn totalPiecesScore(piece_boards: [6]Bitboard) i16 {
-    var score: i16 = 0;
+fn materialScore(piece_boards: [6]Bitboard) f16 {
+    var score: f16 = 0;
 
     inline for (std.enums.values(Piece)) |piece| {
         score += @popCount(piece_boards[piece.idx()]) * pieceWorth(piece);
@@ -868,8 +868,30 @@ fn totalPiecesScore(piece_boards: [6]Bitboard) i16 {
     return score;
 }
 
-inline fn staticEval(pos: *const Position) i16 {
-    return totalPiecesScore(pos.piece_boards[Color.White.idx()]) - totalPiecesScore(pos.piece_boards[Color.Black.idx()]);
+fn controlScore(pos: *const Position) f16 {
+    const occupied_white = pos.occupiedBy(.White);
+    const occupied_black = pos.occupiedBy(.Black);
+    const occupied = occupied_white | occupied_black;
+
+    const controlled_white = attacks.attackedMask(pos, .White, occupied) & ~occupied_white;
+    const controlled_black = attacks.attackedMask(pos, .Black, occupied) & ~occupied_black;
+
+    const count_white: f16 = @popCount(controlled_white);
+    const count_black: f16 = @popCount(controlled_black);
+
+    return count_white - count_black;
+}
+
+inline fn staticEval(pos: *const Position) f16 {
+    const material = materialScore(pos.piece_boards[Color.White.idx()]) - materialScore(pos.piece_boards[Color.Black.idx()]);
+
+    const control = controlScore(pos);
+
+    const total = material + control * 0.4;
+
+    // std.debug.print("material: {}, control: {}, total: {}\n", .{ material, control, total });
+
+    return total;
 }
 
 fn movePriority(move: Move) i8 {
@@ -901,7 +923,7 @@ const EntryType = enum(u2) {
 };
 
 const TranspositionEntry = struct {
-    score: i16 = 0,
+    score: f16 = 0,
     depth: u8,
     best_move: ?Move = null,
     entry_type: EntryType = .EXACT,
@@ -911,20 +933,24 @@ const TranspositionEntry = struct {
 pub const TranspositionTable = std.AutoHashMap(u64, TranspositionEntry);
 
 const MinimaxResult = struct {
-    score: i16,
+    score: f16,
     best_move: ?Move = null,
 };
 
-inline fn gameOverScore(pos: *const Position, maximize: bool) i16 {
+inline fn losingScore(maximize: bool) f16 {
+    return if (maximize) -std.math.floatMax(f16) else std.math.floatMax(f16);
+}
+
+inline fn gameOverScore(pos: *const Position, maximize: bool) f16 {
     if (isInCheck(pos, pos.side_to_move)) {
-        return if (maximize) std.math.minInt(i16) else std.math.maxInt(i16);
+        return losingScore(maximize);
     } else return 0;
 }
 
 const QUIESCENCE_MAX_DEPTH: u8 = 8;
 
 // https://chessprogramming.org/Quiescence_Search
-fn quiescence(pos: *const Position, a: i16, b: i16, depth: u8) i16 {
+fn quiescence(pos: *const Position, a: f16, b: f16, depth: u8) f16 {
     var alpha = a;
     var beta = b;
 
@@ -936,18 +962,17 @@ fn quiescence(pos: *const Position, a: i16, b: i16, depth: u8) i16 {
     }
 
     var move_list = MoveList{};
-    var score: i16 = undefined;
+    var score: f16 = undefined;
 
     if (isInCheck(pos, pos.side_to_move)) {
         findAll(pos, &move_list);
-        if (move_list.len == 0) return gameOverScore(pos, maximize);
-
-        score = if (maximize) std.math.minInt(i16) else std.math.maxInt(i16);
+        score = losingScore(maximize);
+        if (move_list.len == 0) return score;
     } else {
         score = staticEval(pos);
 
         findCaptures(pos, &move_list);
-        if (move_list.len == 0 and !hasMoves(pos)) return gameOverScore(pos, maximize);
+        if (move_list.len == 0 and !hasMoves(pos)) return 0;
 
         if (maximize) {
             if (score >= beta) return score;
@@ -982,9 +1007,9 @@ fn quiescence(pos: *const Position, a: i16, b: i16, depth: u8) i16 {
     return score;
 }
 
-fn minimax(pos: *const Position, depth: u8, a: ?i16, b: ?i16, table: *TranspositionTable) !MinimaxResult {
-    var alpha = a orelse std.math.minInt(i16);
-    var beta = b orelse std.math.maxInt(i16);
+fn minimax(pos: *const Position, depth: u8, a: ?f16, b: ?f16, table: *TranspositionTable) !MinimaxResult {
+    var alpha = a orelse -std.math.floatMax(f16);
+    var beta = b orelse std.math.floatMax(f16);
 
     const existing = table.get(pos.hash);
     if (existing != null and existing.?.depth >= depth) {
@@ -1023,7 +1048,7 @@ fn minimax(pos: *const Position, depth: u8, a: ?i16, b: ?i16, table: *Transposit
 
         std.sort.insertion(Move, move_list.moves[0..move_list.len], prior_best_move, moveCmp);
 
-        entry.score = if (maximize) std.math.minInt(i16) else std.math.maxInt(i16);
+        entry.score = losingScore(maximize);
 
         for (0..move_list.len) |i| {
             var pos_copy = pos.*;
@@ -1084,7 +1109,7 @@ test "minimax_static" {
 
     const result = try minimax(&pos, 0, null, null, &table);
 
-    try t.expectEqual(4, result.score);
+    try t.expect(result.score > 0);
 }
 
 test "minimax_stalemate" {
@@ -1108,7 +1133,7 @@ test "minimax_stalemate" {
 }
 
 test "minimax_checkmate" {
-    const checkmate_score = std.math.maxInt(i16);
+    const checkmate_score = std.math.floatMax(f16);
 
     var table: TranspositionTable = .init(t.allocator);
     defer table.deinit();

@@ -1,8 +1,10 @@
+const std = @import("std");
 const board = @import("board.zig");
 const Bitboard = board.Bitboard;
 const Square = board.Square;
 const Color = board.Color;
 const Piece = board.Piece;
+const Position = board.Position;
 
 fn precomputeAttacksKnight() [64]Bitboard {
     @setEvalBranchQuota(5000);
@@ -218,4 +220,20 @@ pub inline fn getAttacks(piece: Piece, side: Color, from: Square, occupied: Bitb
         Piece.Queen => getAttacksQueen(from, occupied),
         Piece.King => getAttacksKing(from),
     };
+}
+
+pub fn attackedMask(pos: *const Position, side: Color, occupied: Bitboard) Bitboard {
+    var result: Bitboard = 0;
+
+    inline for (std.enums.values(Piece)) |piece| {
+        var placements = pos.piece_boards[side.idx()][piece.idx()];
+
+        while (placements != 0) : (placements &= placements - 1) {
+            const from = Square.from_int(@ctz(placements));
+
+            result |= getAttacks(piece, side, from, occupied);
+        }
+    }
+
+    return result;
 }

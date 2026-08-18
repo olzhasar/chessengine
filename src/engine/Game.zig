@@ -48,7 +48,7 @@ pub fn deinit(self: *Game) void {
 pub fn setPosition(self: *Game, position: board.Position) void {
     self.position = position;
     self.history_len = 0;
-    self.table.clearRetainingCapacity();
+    // self.table.clearRetainingCapacity();
     self.saveHash();
 }
 
