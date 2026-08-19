@@ -884,7 +884,7 @@ pub fn isMoveLegal(pos: *const Position, move: Move) bool {
     return false;
 }
 
-fn pieceWorth(piece: Piece) i8 {
+inline fn pieceWorth(piece: Piece) i8 {
     return switch (piece) {
         .Pawn => 1,
         .Knight => 3,
@@ -905,29 +905,19 @@ fn materialScore(piece_boards: [6]Bitboard) f16 {
     return score;
 }
 
-fn controlScoreInner(pos: *const Position, side: Color, occupied: Bitboard) f16 {
-    var result: f16 = 0;
-
+fn controlScoreInner(pos: *const Position, side: Color, occupied: Bitboard, occupied_self: Bitboard) f16 {
     const controlled = attacks.attackedMask(pos, side, occupied);
 
-    inline for (std.enums.values(Piece)) |piece| {
-        const placements = pos.piece_boards[side.opp().idx()][piece.idx()];
-        const worth = if (piece == .King) 5 else pieceWorth(piece);
-
-        result += @popCount(placements & controlled) * worth;
-    }
-
-    // mobility bonus
-    result += 0.2 * @as(f16, @popCount(controlled & ~occupied));
-
-    return result;
+    return @as(f16, @popCount(controlled & ~occupied_self));
 }
 
 fn controlScore(pos: *const Position) f16 {
-    const occupied = pos.occupied();
+    const occupied_white = pos.occupiedBy(.White);
+    const occupied_black = pos.occupiedBy(.Black);
+    const occupied = occupied_white | occupied_black;
 
-    const score_white = controlScoreInner(pos, .White, occupied);
-    const score_black = controlScoreInner(pos, .Black, occupied);
+    const score_white = controlScoreInner(pos, .White, occupied, occupied_white);
+    const score_black = controlScoreInner(pos, .Black, occupied, occupied_black);
 
     return score_white - score_black;
 }

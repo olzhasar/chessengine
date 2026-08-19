@@ -107,7 +107,7 @@ fn promptEngineDepth(reader: *std.Io.Reader) ?u8 {
 
     while (true) {
         const input = reader.takeDelimiter('\n') catch continue;
-        if (input == null or input.?.len != 1) return null;
+        if (input == null) return null;
 
         if (std.fmt.parseInt(u8, input.?, 10)) |val| {
             return val;
