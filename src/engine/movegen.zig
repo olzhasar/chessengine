@@ -101,9 +101,14 @@ fn getEnPassantMoves(from: Square, side: Color, pos: *const Position, out: *Move
         if (target == null) continue;
 
         if (target.?.mask() & pos.en_passant_targets != 0) {
-            const temp_pos = pos.*;
-            const move = Move{ .piece = .Pawn, .from = from, .to = target.?, .move_type = .CAPTURE, .captured_piece = .Pawn };
-            if (appendMoveIfLegal(move, &temp_pos, out)) found = true;
+            out.append(.{
+                .piece = .Pawn,
+                .from = from,
+                .to = target.?,
+                .move_type = .CAPTURE,
+                .captured_piece = .Pawn,
+            });
+            found = true;
         }
     }
 
@@ -145,7 +150,12 @@ fn getCastleMoves(from: Square, side: Color, pos: *const Position, occupied: Bit
         if ((mask | squares[2].mask()) & occupied != 0) break :blk;
         if (isAttacked(mask, side.opp(), pos)) break :blk; // only the king path should be free from checks
 
-        out.append(.{ .piece = .King, .from = from, .to = squares[1], .move_type = .CASTLE });
+        out.append(.{
+            .piece = .King,
+            .from = from,
+            .to = squares[1],
+            .move_type = .CASTLE,
+        });
         found = true;
     }
 
@@ -161,16 +171,6 @@ fn getMoveSquares(piece: Piece, from: Square, pos: *const Position, occupied: Bi
     }
 
     return squares;
-}
-
-inline fn appendMoveIfLegal(move: Move, pos: *const Position, out: *MoveList) bool {
-    var pos_copy = pos.*;
-    pos_copy.apply(move);
-
-    if (isInCheck(&pos_copy, pos.side_to_move)) return false;
-
-    out.append(move);
-    return true;
 }
 
 fn findInner(
@@ -200,13 +200,28 @@ fn findInner(
             if ((pos.side_to_move == .White and target.rank() == 7) or (pos.side_to_move == .Black and target.rank() == 0)) {
                 inline for (PromotionPieces) |prom_piece| {
                     const move_type: MoveType = if (occupied_enemy & target.mask() != 0) .CAPTURE else .NORMAL;
-                    if (appendMoveIfLegal(.{ .piece = piece, .from = from, .to = target, .promotion_piece = prom_piece, .move_type = move_type, .captured_piece = captured_piece }, pos, out) and stop_at_first) return;
+                    out.append(.{
+                        .piece = piece,
+                        .from = from,
+                        .to = target,
+                        .promotion_piece = prom_piece,
+                        .move_type = move_type,
+                        .captured_piece = captured_piece,
+                    });
+                    if (stop_at_first) return;
                 }
                 continue;
             }
         }
         const move_type: MoveType = if (mask & occupied_enemy == 0) .NORMAL else .CAPTURE;
-        if (appendMoveIfLegal(.{ .piece = piece, .from = from, .to = target, .move_type = move_type, .captured_piece = captured_piece }, pos, out) and stop_at_first) return;
+        out.append(.{
+            .piece = piece,
+            .from = from,
+            .to = target,
+            .move_type = move_type,
+            .captured_piece = captured_piece,
+        });
+        if (stop_at_first) return;
     }
 }
 
@@ -601,11 +616,25 @@ fn findAllInner(pos: *const Position, out: *MoveList, captures_only: bool) void 
 }
 
 pub fn findAll(pos: *const Position, out: *MoveList) void {
-    findAllInner(pos, out, false);
+    var move_list = MoveList{};
+
+    findAllInner(pos, &move_list, false);
+
+    for (0..move_list.len) |i| {
+        const move = move_list.moves[i];
+        var pos_copy = pos.*;
+        pos_copy.apply(move);
+        if (!isInCheck(&pos_copy, pos.side_to_move)) out.append(move);
+    }
 }
 
+// pseudo-legal
 fn findCaptures(pos: *const Position, out: *MoveList) void {
     findAllInner(pos, out, true);
+}
+
+fn findAllPseudoLegal(pos: *const Position, out: *MoveList) void {
+    findAllInner(pos, out, false);
 }
 
 test "find captures" {
@@ -647,6 +676,8 @@ pub fn hasMoves(pos: *const Position) bool {
     const occupied_self = pos.occupiedBy(pos.side_to_move);
     const occupied_enemy = pos.occupiedBy(pos.sideEnemy());
 
+    var idx: usize = 0;
+
     inline for (std.enums.values(Piece)) |piece| {
         var placements = pos.piece_boards[pos.side_to_move.idx()][piece.idx()];
 
@@ -654,11 +685,17 @@ pub fn hasMoves(pos: *const Position) bool {
             const square = Square.from_int(@ctz(placements));
 
             findInner(piece, square, pos, occupied, occupied_self, occupied_enemy, &move_list, true, false);
-            if (move_list.len > 0) return true;
+            for (idx..move_list.len) |i| {
+                const move = move_list.moves[i];
+                var pos_copy = pos.*;
+                pos_copy.apply(move);
+                if (!isInCheck(&pos_copy, pos.side_to_move)) return true;
+                idx += 1;
+            }
         }
     }
 
-    return move_list.len > 0;
+    return false;
 }
 
 test "starting_moves" {
@@ -977,10 +1014,11 @@ fn quiescence(pos: *const Position, a: f16, b: f16, depth: u8) f16 {
     var move_list = MoveList{};
     var score: f16 = undefined;
 
-    if (isInCheck(pos, pos.side_to_move)) {
-        findAll(pos, &move_list);
+    const in_check = isInCheck(pos, pos.side_to_move);
+
+    if (in_check) {
         score = losingScore(maximize);
-        if (move_list.len == 0) return score;
+        findAllPseudoLegal(pos, &move_list);
     } else {
         score = staticEval(pos);
 
@@ -993,16 +1031,18 @@ fn quiescence(pos: *const Position, a: f16, b: f16, depth: u8) f16 {
         }
 
         findCaptures(pos, &move_list);
-        if (move_list.len == 0) {
-            return if (hasMoves(pos)) score else 0;
-        }
     }
 
     std.sort.insertion(Move, move_list.moves[0..move_list.len], @as(?Move, null), moveCmp);
 
+    var legal_move_exists = false;
+
     for (0..move_list.len) |i| {
         var pos_copy = pos.*;
         pos_copy.apply(move_list.moves[i]);
+        if (isInCheck(&pos_copy, pos.side_to_move)) continue;
+
+        legal_move_exists = true;
 
         const current = quiescence(&pos_copy, alpha, beta, depth + 1);
 
@@ -1015,6 +1055,11 @@ fn quiescence(pos: *const Position, a: f16, b: f16, depth: u8) f16 {
         }
 
         if (alpha >= beta) break;
+    }
+
+    if (!legal_move_exists) {
+        if (in_check) return score;
+        return if (hasMoves(pos)) score else 0;
     }
 
     return score;
@@ -1050,45 +1095,47 @@ fn minimax(pos: *const Position, depth: u8, a: ?f16, b: ?f16, table: *Transposit
 
     const maximize: bool = (pos.side_to_move == .White);
 
-    blk: {
-        var move_list = MoveList{};
-        findAll(pos, &move_list);
+    var move_list = MoveList{};
+    findAllPseudoLegal(pos, &move_list);
 
-        if (move_list.len == 0) {
-            entry.score = gameOverScore(pos, maximize);
-            break :blk;
+    std.sort.insertion(Move, move_list.moves[0..move_list.len], prior_best_move, moveCmp);
+
+    entry.score = losingScore(maximize);
+    var legal_move_exists = false;
+
+    for (0..move_list.len) |i| {
+        var pos_copy = pos.*;
+        const move = move_list.moves[i];
+        pos_copy.apply(move);
+
+        if (isInCheck(&pos_copy, pos.side_to_move)) continue;
+
+        legal_move_exists = true;
+
+        const current = try minimax(&pos_copy, depth - 1, alpha, beta, table);
+
+        if (maximize) {
+            if (entry.best_move == null or current.score > entry.score) {
+                entry.score = current.score;
+                entry.best_move = move;
+            }
+            alpha = @max(alpha, entry.score);
+        } else {
+            if (entry.best_move == null or current.score < entry.score) {
+                entry.score = current.score;
+                entry.best_move = move;
+            }
+            beta = @min(beta, entry.score);
         }
 
-        std.sort.insertion(Move, move_list.moves[0..move_list.len], prior_best_move, moveCmp);
-
-        entry.score = losingScore(maximize);
-
-        for (0..move_list.len) |i| {
-            var pos_copy = pos.*;
-            const move = move_list.moves[i];
-            pos_copy.apply(move);
-
-            const current = try minimax(&pos_copy, depth - 1, alpha, beta, table);
-
-            if (maximize) {
-                if (entry.best_move == null or current.score > entry.score) {
-                    entry.score = current.score;
-                    entry.best_move = move;
-                }
-                alpha = @max(alpha, entry.score);
-            } else {
-                if (entry.best_move == null or current.score < entry.score) {
-                    entry.score = current.score;
-                    entry.best_move = move;
-                }
-                beta = @min(beta, entry.score);
-            }
-
-            if (alpha >= beta) {
-                entry.entry_type = if (maximize) .LOWERBOUND else .UPPERBOUND;
-                break;
-            }
+        if (alpha >= beta) {
+            entry.entry_type = if (maximize) .LOWERBOUND else .UPPERBOUND;
+            break;
         }
+    }
+
+    if (!legal_move_exists) {
+        entry.score = gameOverScore(pos, maximize);
     }
 
     try table.put(pos.hash, entry);
@@ -1123,6 +1170,54 @@ test "minimax_static" {
     const result = try minimax(&pos, 0, null, null, &table);
 
     try t.expect(result.score > 0);
+}
+
+test "minimax quiescence ignores illegal capture" {
+    var pos = Position.init(.Black);
+    pos.put(.Black, .King, .h8);
+    pos.put(.Black, .Pawn, .g7);
+    pos.put(.White, .King, .f7);
+    pos.put(.White, .Queen, .g6);
+    pos.put(.White, .Knight, .h6);
+    pos.put(.White, .Bishop, .c3);
+
+    var captures = MoveList{};
+    findCaptures(&pos, &captures);
+
+    try t.expect(captures.has("g7h6", .CAPTURE));
+    try t.expect(!isInCheck(&pos, .Black));
+    try t.expect(!hasMoves(&pos));
+
+    var table: TranspositionTable = .init(t.allocator);
+    defer table.deinit();
+
+    const result = try minimax(&pos, 0, null, null, &table);
+    try t.expectEqual(@as(f16, 0), result.score);
+    try t.expectEqual(null, result.best_move);
+}
+
+test "minimax ignores illegal move" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, .e1);
+    pos.put(.White, .Rook, .e2);
+    pos.put(.Black, .King, .c3);
+    pos.put(.Black, .Queen, .d2);
+    pos.put(.Black, .Rook, .e8);
+
+    var pseudo_legal_moves = MoveList{};
+    findAllPseudoLegal(&pos, &pseudo_legal_moves);
+    try t.expect(pseudo_legal_moves.has("e2d2", .CAPTURE));
+
+    var table: TranspositionTable = .init(t.allocator);
+    defer table.deinit();
+
+    const result = try minimax(&pos, 1, null, null, &table);
+    try t.expect(result.best_move != null);
+    try t.expect(!result.best_move.?.equalsUci("e2d2"));
+
+    var next = pos;
+    next.apply(result.best_move.?);
+    try t.expect(!isInCheck(&next, .White));
 }
 
 test "minimax_stalemate" {
