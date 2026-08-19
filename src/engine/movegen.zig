@@ -868,18 +868,31 @@ fn materialScore(piece_boards: [6]Bitboard) f16 {
     return score;
 }
 
+fn controlScoreInner(pos: *const Position, side: Color, occupied: Bitboard) f16 {
+    var result: f16 = 0;
+
+    const controlled = attacks.attackedMask(pos, side, occupied);
+
+    inline for (std.enums.values(Piece)) |piece| {
+        const placements = pos.piece_boards[side.opp().idx()][piece.idx()];
+        const worth = if (piece == .King) 5 else pieceWorth(piece);
+
+        result += @popCount(placements & controlled) * worth;
+    }
+
+    // mobility bonus
+    result += 0.2 * @as(f16, @popCount(controlled & ~occupied));
+
+    return result;
+}
+
 fn controlScore(pos: *const Position) f16 {
-    const occupied_white = pos.occupiedBy(.White);
-    const occupied_black = pos.occupiedBy(.Black);
-    const occupied = occupied_white | occupied_black;
+    const occupied = pos.occupied();
 
-    const controlled_white = attacks.attackedMask(pos, .White, occupied) & ~occupied_white;
-    const controlled_black = attacks.attackedMask(pos, .Black, occupied) & ~occupied_black;
+    const score_white = controlScoreInner(pos, .White, occupied);
+    const score_black = controlScoreInner(pos, .Black, occupied);
 
-    const count_white: f16 = @popCount(controlled_white);
-    const count_black: f16 = @popCount(controlled_black);
-
-    return count_white - count_black;
+    return score_white - score_black;
 }
 
 inline fn staticEval(pos: *const Position) f16 {
@@ -887,7 +900,7 @@ inline fn staticEval(pos: *const Position) f16 {
 
     const control = controlScore(pos);
 
-    const total = material + control * 0.4;
+    const total = material + 0.05 * control;
 
     // std.debug.print("material: {}, control: {}, total: {}\n", .{ material, control, total });
 
