@@ -984,18 +984,18 @@ fn quiescence(pos: *const Position, a: f16, b: f16, depth: u8) f16 {
     } else {
         score = staticEval(pos);
 
-        findCaptures(pos, &move_list);
-        if (move_list.len == 0 and !hasMoves(pos)) return 0;
-
         if (maximize) {
-            if (score >= beta) return score;
+            if (score >= beta) return if (hasMoves(pos)) score else 0;
             alpha = @max(alpha, score);
         } else {
-            if (score <= alpha) return score;
+            if (score <= alpha) return if (hasMoves(pos)) score else 0;
             beta = @min(beta, score);
         }
 
-        if (move_list.len == 0) return score;
+        findCaptures(pos, &move_list);
+        if (move_list.len == 0) {
+            return if (hasMoves(pos)) score else 0;
+        }
     }
 
     std.sort.insertion(Move, move_list.moves[0..move_list.len], @as(?Move, null), moveCmp);
