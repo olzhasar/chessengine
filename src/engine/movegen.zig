@@ -1187,7 +1187,14 @@ test "minimax_checkmate" {
 pub fn findBestMove(pos: *const Position, depth: u8, table: *TranspositionTable) !?Move {
     assert(depth > 0);
 
-    const result = try minimax(pos, depth, null, null, table);
+    var result: MinimaxResult = undefined;
+
+    var current_depth: u8 = 1;
+    while (current_depth <= depth) : (current_depth += 1) {
+        result = try minimax(pos, current_depth, null, null, table);
+        // TODO: log nodes, nps, depth, best move
+    }
+
     return result.best_move;
 }
 
