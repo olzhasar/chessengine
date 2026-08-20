@@ -1,10 +1,12 @@
 const std = @import("std");
-const board = @import("board.zig");
-const Bitboard = board.Bitboard;
-const Square = board.Square;
-const Color = board.Color;
-const Piece = board.Piece;
-const Position = board.Position;
+
+const Position = @import("Position.zig");
+
+const types = @import("types.zig");
+const Bitboard = types.Bitboard;
+const Square = types.Square;
+const Color = types.Color;
+const Piece = types.Piece;
 
 fn precomputeAttacksKnight() [64]Bitboard {
     @setEvalBranchQuota(5000);

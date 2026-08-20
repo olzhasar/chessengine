@@ -2,15 +2,16 @@ const std = @import("std");
 const assert = std.debug.assert;
 const t = std.testing;
 
-const board = @import("board.zig");
-const Bitboard = board.Bitboard;
-const Move = board.Move;
-const PromotionPieces = board.PromotionPieces;
-const MoveType = board.MoveType;
-const Position = board.Position;
-const Square = board.Square;
-const Color = board.Color;
-const Piece = board.Piece;
+const types = @import("types.zig");
+const Bitboard = types.Bitboard;
+const Move = types.Move;
+const PromotionPieces = types.PromotionPieces;
+const MoveType = types.MoveType;
+const Square = types.Square;
+const Color = types.Color;
+const Piece = types.Piece;
+
+const Position = @import("Position.zig");
 
 const attacks = @import("attacks.zig");
 

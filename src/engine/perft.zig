@@ -1,8 +1,8 @@
 const std = @import("std");
 const t = std.testing;
 
-const board = @import("board.zig");
-const Position = board.Position;
+const types = @import("types.zig");
+const Position = @import("Position.zig");
 
 const movegen = @import("movegen.zig");
 

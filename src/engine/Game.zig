@@ -2,12 +2,13 @@ const std = @import("std");
 const assert = std.debug.assert;
 const t = std.testing;
 
-const board = @import("board.zig");
+const types = @import("types.zig");
 const movegen = @import("movegen.zig");
+const Position = @import("Position.zig");
 
-const Move = board.Move;
-const Color = board.Color;
-const GameError = board.GameError;
+const Move = types.Move;
+const Color = types.Color;
+const GameError = Position.PositionError;
 
 pub const GameMode = enum {
     ENGINE_VS_ENGINE,
@@ -24,7 +25,7 @@ pub const GameStatus = enum {
 
 const Game = @This();
 
-position: board.Position,
+position: Position,
 table: movegen.TranspositionTable,
 
 history: [101]u64 = @splat(0),
@@ -45,7 +46,7 @@ pub fn deinit(self: *Game) void {
     self.table.deinit();
 }
 
-pub fn setPosition(self: *Game, position: board.Position) void {
+pub fn setPosition(self: *Game, position: Position) void {
     self.position = position;
     self.history_len = 0;
     // self.table.clearRetainingCapacity();
