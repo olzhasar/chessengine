@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const engine = @import("chessengine");
 const terminal = @import("terminal.zig");
 const uci = @import("uci.zig");
 
@@ -8,6 +9,13 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(arena);
 
     if (args.len > 1 and std.ascii.eqlIgnoreCase("play", args[1])) return terminal.play(init.io, init.gpa);
+    if (args.len > 1 and std.ascii.eqlIgnoreCase("perft", args[1])) {
+        var depth_limit: ?u8 = null;
+        if (args.len > 2) {
+            depth_limit = try std.fmt.parseInt(u8, std.mem.trim(u8, args[2], " \t\r"), 10);
+        }
+        return engine.Perft.run(init.io, depth_limit);
+    }
 
     return uci.run(init);
 }

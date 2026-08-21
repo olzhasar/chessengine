@@ -3,6 +3,7 @@ pub const GameError = Position.PositionError;
 
 pub const Game = @import("Game.zig");
 pub const GameMode = Game.GameMode;
+pub const Perft = @import("perft.zig");
 
 const types = @import("types.zig");
 
