@@ -4,6 +4,8 @@ const t = std.testing;
 
 const types = @import("types.zig");
 const movegen = @import("movegen.zig");
+const attacks = @import("attacks.zig");
+const search = @import("search.zig");
 const Position = @import("Position.zig");
 
 const Move = types.Move;
@@ -26,7 +28,7 @@ pub const GameStatus = enum {
 const Game = @This();
 
 position: Position,
-table: movegen.TranspositionTable,
+table: search.TranspositionTable,
 
 history: [101]u64 = @splat(0),
 history_len: u8 = 0,
@@ -61,7 +63,7 @@ pub fn status(self: *Game) GameStatus {
     movegen.findAll(&self.position, &move_list);
 
     if (move_list.len == 0) {
-        if (movegen.isInCheck(&self.position, self.position.side_to_move)) return .CHECKMATE;
+        if (attacks.isInCheck(&self.position, self.position.side_to_move)) return .CHECKMATE;
         return .STALEMATE;
     }
 
@@ -123,7 +125,7 @@ pub fn go(self: *Game, input: []const u8) !void {
 
 pub fn findEngineMove(self: *Game, depth: u8) !?Move {
     // TODO: add time limit support
-    return movegen.findBestMove(&self.position, depth, &self.table);
+    return search.findBestMove(&self.position, depth, &self.table);
 }
 
 pub fn goEngine(self: *Game, depth: u8) !?Move {

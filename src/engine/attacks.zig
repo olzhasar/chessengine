@@ -1,4 +1,5 @@
 const std = @import("std");
+const t = std.testing;
 
 const Position = @import("Position.zig");
 
@@ -240,4 +241,143 @@ pub fn attackedMask(pos: *const Position, side: Color, occupied: Bitboard) Bitbo
     }
 
     return result;
+}
+
+fn isAttackedBy(area_mask: Bitboard, piece: PieceType, attacker: Color, pos: *const Position, occupied: Bitboard) bool {
+    var pieces = pos.piece_boards[attacker.idx()][piece.idx()];
+    while (pieces != 0) : (pieces &= pieces - 1) {
+        const square = Square.from_int(@ctz(pieces));
+        if (getAttacks(piece, attacker, square, occupied) & area_mask != 0) return true;
+    }
+
+    return false;
+}
+
+pub fn isAttacked(area: Bitboard, attacker: Color, pos: *const Position) bool {
+    const occupied = pos.occupied();
+
+    inline for (PieceTypes) |piece| {
+        if (isAttackedBy(area, piece, attacker, pos, occupied)) return true;
+    }
+
+    return false;
+}
+
+fn isSquareAttacked(square: Square, defender: Color, pos: *const Position) bool {
+    var pawn_attacks: Bitboard = 0;
+    const pawn1 = square.rel(1, defender.pawn_direction());
+    if (pawn1 != null) pawn_attacks |= pawn1.?.mask();
+    const pawn2 = square.rel(-1, defender.pawn_direction());
+    if (pawn2 != null) pawn_attacks |= pawn2.?.mask();
+
+    if (pawn_attacks & pos.piece_boards[defender.opp().idx()][PieceType.Pawn.idx()] != 0) return true;
+
+    const knight_attacks = getAttacksKnight(square);
+    if (knight_attacks & pos.piece_boards[defender.opp().idx()][PieceType.Knight.idx()] != 0) return true;
+
+    const king_attacks = getAttacksKing(square);
+    if (king_attacks & pos.piece_boards[defender.opp().idx()][PieceType.King.idx()] != 0) return true;
+
+    const occupied = pos.occupied();
+    const attacker_pieces = pos.piece_boards[defender.opp().idx()];
+
+    const rook_attacks = getAttacksRook(square, occupied);
+    if (rook_attacks & (attacker_pieces[PieceType.Rook.idx()] | attacker_pieces[PieceType.Queen.idx()]) != 0) return true;
+
+    const bishop_attacks = getAttacksBishop(square, occupied);
+    return bishop_attacks & (attacker_pieces[PieceType.Bishop.idx()] | attacker_pieces[PieceType.Queen.idx()]) != 0;
+}
+
+pub fn isInCheck(pos: *const Position, side: Color) bool {
+    const king_mask = pos.piece_boards[side.idx()][PieceType.King.idx()];
+    if (king_mask == 0) return false;
+
+    const king_square = Square.from_int(@ctz(king_mask));
+    return isSquareAttacked(king_square, side, pos);
+}
+
+test "is_check_no" {
+    const pos = Position.start();
+
+    try t.expect(!isInCheck(&pos, .White));
+    try t.expect(!isInCheck(&pos, .Black));
+}
+
+test "is_check_pawn" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, .d1);
+    pos.put(.Black, .Pawn, .c2);
+
+    try t.expect(isInCheck(&pos, .White));
+
+    pos = Position.init(.Black);
+    pos.put(.Black, .King, .e8);
+    pos.put(.White, .Pawn, .d7);
+
+    try t.expect(isInCheck(&pos, .Black));
+}
+
+test "is_check_knight" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, .d1);
+    pos.put(.Black, .Knight, .e3);
+
+    try t.expect(isInCheck(&pos, .White));
+
+    pos = Position.init(.Black);
+    pos.put(.Black, .King, .h8);
+    pos.put(.White, .Knight, .g6);
+
+    try t.expect(isInCheck(&pos, .Black));
+}
+
+test "is_check_bishop" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, .d1);
+    pos.put(.Black, .Bishop, .a4);
+
+    try t.expect(isInCheck(&pos, .White));
+
+    pos = Position.init(.Black);
+    pos.put(.Black, .King, .h8);
+    pos.put(.White, .Bishop, .a1);
+
+    try t.expect(isInCheck(&pos, .Black));
+}
+
+test "is_check_rook" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, .d1);
+    pos.put(.Black, .Rook, .d8);
+
+    try t.expect(isInCheck(&pos, .White));
+
+    pos = Position.init(.Black);
+    pos.put(.Black, .King, .h8);
+    pos.put(.White, .Rook, .h1);
+
+    try t.expect(isInCheck(&pos, .Black));
+}
+
+test "is_check_queen" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, .d1);
+    pos.put(.Black, .Queen, .a4);
+
+    try t.expect(isInCheck(&pos, .White));
+
+    pos = Position.init(.Black);
+    pos.put(.Black, .King, .h8);
+    pos.put(.White, .Queen, .h1);
+
+    try t.expect(isInCheck(&pos, .Black));
+}
+
+test "is_check_king" {
+    var pos = Position.init(.White);
+    pos.put(.White, .King, .e4);
+    pos.put(.Black, .King, .d4);
+
+    try t.expect(isInCheck(&pos, .White));
+    try t.expect(isInCheck(&pos, .Black));
 }
