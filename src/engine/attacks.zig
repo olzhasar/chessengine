@@ -6,7 +6,8 @@ const types = @import("types.zig");
 const Bitboard = types.Bitboard;
 const Square = types.Square;
 const Color = types.Color;
-const Piece = types.Piece;
+const PieceType = types.PieceType;
+const PieceTypes = types.PieceTypes;
 
 fn precomputeAttacksKnight() [64]Bitboard {
     @setEvalBranchQuota(5000);
@@ -213,21 +214,22 @@ pub fn getAttacksKing(from: Square) Bitboard {
     return ATTACKS_KING[from.as_usize()];
 }
 
-pub inline fn getAttacks(piece: Piece, side: Color, from: Square, occupied: Bitboard) Bitboard {
+pub inline fn getAttacks(piece: PieceType, side: Color, from: Square, occupied: Bitboard) Bitboard {
     return switch (piece) {
-        Piece.Pawn => getAttacksPawn(from, side),
-        Piece.Knight => getAttacksKnight(from),
-        Piece.Bishop => getAttacksBishop(from, occupied),
-        Piece.Rook => getAttacksRook(from, occupied),
-        Piece.Queen => getAttacksQueen(from, occupied),
-        Piece.King => getAttacksKing(from),
+        PieceType.Pawn => getAttacksPawn(from, side),
+        PieceType.Knight => getAttacksKnight(from),
+        PieceType.Bishop => getAttacksBishop(from, occupied),
+        PieceType.Rook => getAttacksRook(from, occupied),
+        PieceType.Queen => getAttacksQueen(from, occupied),
+        PieceType.King => getAttacksKing(from),
+        else => unreachable,
     };
 }
 
 pub fn attackedMask(pos: *const Position, side: Color, occupied: Bitboard) Bitboard {
     var result: Bitboard = 0;
 
-    inline for (std.enums.values(Piece)) |piece| {
+    inline for (PieceTypes) |piece| {
         var placements = pos.piece_boards[side.idx()][piece.idx()];
 
         while (placements != 0) : (placements &= placements - 1) {

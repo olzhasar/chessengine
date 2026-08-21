@@ -8,7 +8,8 @@ const zobrist = @import("zobrist.zig");
 const Bitboard = types.Bitboard;
 const CastlingRights = types.CastlingRights;
 const Color = types.Color;
-const Piece = types.Piece;
+const PieceType = types.PieceType;
+const PieceTypes = types.PieceTypes;
 const Square = types.Square;
 const Move = types.Move;
 const MoveType = types.MoveType;
@@ -82,7 +83,7 @@ pub fn start() Position {
     return pos;
 }
 
-pub fn put(self: *Position, color: Color, piece: Piece, square: Square) void {
+pub fn put(self: *Position, color: Color, piece: PieceType, square: Square) void {
     assert(self.occupied() & square.mask() == 0);
 
     self.piece_boards[color.idx()][piece.idx()] |= square.mask();
@@ -123,34 +124,36 @@ pub fn occupied(self: *const Position) Bitboard {
 
 pub fn occupiedBy(self: *const Position, color: Color) Bitboard {
     var result: Bitboard = 0;
-    inline for (std.enums.values(Piece)) |piece| {
+    inline for (PieceTypes) |piece| {
         result |= self.piece_boards[color.idx()][piece.idx()];
     }
 
     return result;
 }
 
-pub fn getPieceAt(self: *const Position, square: Square) ?Piece {
-    return self.getPieceAtForSide(square, .White) orelse self.getPieceAtForSide(square, .Black);
+pub fn getPieceAt(self: *const Position, square: Square) PieceType {
+    const white = self.getPieceAtForSide(square, .White);
+    if (white != .NO_PIECE_TYPE) return white;
+    return self.getPieceAtForSide(square, .Black);
 }
 
-pub fn getPieceAtForSide(self: *const Position, square: Square, side: Color) ?Piece {
-    inline for (std.enums.values(Piece)) |piece| {
+pub fn getPieceAtForSide(self: *const Position, square: Square, side: Color) PieceType {
+    inline for (PieceTypes) |piece| {
         if (self.piece_boards[side.idx()][piece.idx()] & square.mask() != 0) return piece;
     }
 
-    return null;
+    return .NO_PIECE_TYPE;
 }
 
 fn calculateHash(self: *const Position) u64 {
     var result: u64 = 0;
 
     for (0..2) |ci| {
-        for (std.enums.values(Piece)) |piece| {
-            var bitboard = self.piece_boards[ci][piece.idx()];
+        for (PieceTypes) |piece_type| {
+            var bitboard = self.piece_boards[ci][piece_type.idx()];
             while (bitboard != 0) : (bitboard &= bitboard - 1) {
                 const idx = @ctz(bitboard);
-                result ^= zobrist.TABLE.piece_boards[ci][piece.idx()][idx];
+                result ^= zobrist.TABLE.piece_boards[ci][piece_type.idx()][idx];
             }
         }
     }
@@ -197,7 +200,7 @@ pub fn parseMove(self: *Position, input: []const u8) PositionError!Move {
     if (to.mask() & occupied_self != 0) return PositionError.InvalidMove;
 
     var move: Move = .{
-        .piece = self.getPieceAt(from).?,
+        .piece = self.getPieceAt(from),
         .from = from,
         .to = to,
     };
@@ -214,7 +217,7 @@ pub fn parseMove(self: *Position, input: []const u8) PositionError!Move {
     }
 
     if (move.to.mask() & occupied_enemy != 0) {
-        move.captured_piece = self.getPieceAtForSide(move.to, self.sideEnemy()).?;
+        move.captured_piece = self.getPieceAtForSide(move.to, self.sideEnemy());
         move.move_type = .CAPTURE;
     } else if (move.piece == .Pawn and move.to.mask() & self.en_passant_targets != 0) {
         move.captured_piece = .Pawn;
@@ -270,7 +273,7 @@ test "parse_move" {
 
     try t.expectEqualStrings("b7", &move.from.str());
     try t.expectEqualStrings("b8", &move.to.str());
-    try t.expectEqual(Piece.Queen, move.promotion_piece);
+    try t.expectEqual(PieceType.Queen, move.promotion_piece);
 
     var black_pos = Position.init(.Black);
     black_pos.put(.Black, .Pawn, .b2);
@@ -279,8 +282,8 @@ test "parse_move" {
     move = try black_pos.parseMove("b2c1r");
 
     try t.expectEqual(MoveType.CAPTURE, move.move_type);
-    try t.expectEqual(Piece.Knight, move.captured_piece);
-    try t.expectEqual(Piece.Rook, move.promotion_piece);
+    try t.expectEqual(PieceType.Knight, move.captured_piece);
+    try t.expectEqual(PieceType.Rook, move.promotion_piece);
 }
 
 test "parse_move castle" {
@@ -292,12 +295,12 @@ test "parse_move castle" {
     const short = try pos.parseMove("e1c1");
 
     try t.expectEqual(MoveType.CASTLE, short.move_type);
-    try t.expectEqual(Piece.King, short.piece);
+    try t.expectEqual(PieceType.King, short.piece);
 
     const long = try pos.parseMove("e1g1");
 
     try t.expectEqual(MoveType.CASTLE, long.move_type);
-    try t.expectEqual(Piece.King, long.piece);
+    try t.expectEqual(PieceType.King, long.piece);
 }
 
 test "parse_move king capture" {
@@ -309,7 +312,7 @@ test "parse_move king capture" {
     const move = try pos.parseMove("g5f4");
 
     try t.expectEqual(MoveType.CAPTURE, move.move_type);
-    try t.expectEqual(Piece.Pawn, move.captured_piece.?);
+    try t.expectEqual(PieceType.Pawn, move.captured_piece);
 }
 
 pub fn apply(self: *Position, move: Move) void {
@@ -321,7 +324,7 @@ pub fn apply(self: *Position, move: Move) void {
     self.piece_boards[self.side_to_move.idx()][move.piece.idx()] ^= from_mask;
     self.hash ^= zobrist.TABLE.piece_boards[self.side_to_move.idx()][move.piece.idx()][move.from.as_usize()];
 
-    if (move.promotion_piece == null) {
+    if (move.promotion_piece == .NO_PIECE_TYPE) {
         self.piece_boards[self.side_to_move.idx()][move.piece.idx()] |= to_mask;
         self.hash ^= zobrist.TABLE.piece_boards[self.side_to_move.idx()][move.piece.idx()][move.to.as_usize()];
     }
@@ -337,6 +340,9 @@ pub fn apply(self: *Position, move: Move) void {
 
                 self.en_passant_targets |= en_passant_square.?.mask();
                 self.hash ^= zobrist.TABLE.en_passant_targets[en_passant_square.?.file()];
+            } else if (move.promotion_piece != .NO_PIECE_TYPE) {
+                self.piece_boards[self.side_to_move.idx()][move.promotion_piece.idx()] |= to_mask;
+                self.hash ^= zobrist.TABLE.piece_boards[self.side_to_move.idx()][move.promotion_piece.idx()][move.to.as_usize()];
             }
         },
         .King => {
@@ -358,15 +364,15 @@ pub fn apply(self: *Position, move: Move) void {
                     .Black => move.to.rel(0, 1),
                 };
 
-                assert(self.piece_boards[self.sideEnemy().idx()][Piece.Pawn.idx()] & pawn_to_capture.?.mask() != 0);
-                self.piece_boards[self.sideEnemy().idx()][Piece.Pawn.idx()] ^= pawn_to_capture.?.mask();
-                self.hash ^= zobrist.TABLE.piece_boards[self.sideEnemy().idx()][Piece.Pawn.idx()][pawn_to_capture.?.as_usize()];
+                assert(self.piece_boards[self.sideEnemy().idx()][PieceType.Pawn.idx()] & pawn_to_capture.?.mask() != 0);
+                self.piece_boards[self.sideEnemy().idx()][PieceType.Pawn.idx()] ^= pawn_to_capture.?.mask();
+                self.hash ^= zobrist.TABLE.piece_boards[self.sideEnemy().idx()][PieceType.Pawn.idx()][pawn_to_capture.?.as_usize()];
             } else {
-                assert(move.captured_piece != null);
-                self.piece_boards[self.sideEnemy().idx()][move.captured_piece.?.idx()] ^= to_mask;
-                self.hash ^= zobrist.TABLE.piece_boards[self.sideEnemy().idx()][move.captured_piece.?.idx()][@ctz(to_mask)];
+                assert(move.captured_piece != .NO_PIECE_TYPE);
+                self.piece_boards[self.sideEnemy().idx()][move.captured_piece.idx()] ^= to_mask;
+                self.hash ^= zobrist.TABLE.piece_boards[self.sideEnemy().idx()][move.captured_piece.idx()][@ctz(to_mask)];
 
-                if (move.captured_piece.? == .Rook) {
+                if (move.captured_piece == .Rook) {
                     self.revokeCastlingRightAt(move.to);
                 }
             }
@@ -405,20 +411,15 @@ pub fn apply(self: *Position, move: Move) void {
                 else => unreachable,
             }
 
-            self.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()] ^= old_rook_square.mask();
-            self.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()] |= new_rook_square.mask();
-            self.hash ^= zobrist.TABLE.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()][old_rook_square.as_usize()];
-            self.hash ^= zobrist.TABLE.piece_boards[self.side_to_move.idx()][Piece.Rook.idx()][new_rook_square.as_usize()];
+            self.piece_boards[self.side_to_move.idx()][PieceType.Rook.idx()] ^= old_rook_square.mask();
+            self.piece_boards[self.side_to_move.idx()][PieceType.Rook.idx()] |= new_rook_square.mask();
+            self.hash ^= zobrist.TABLE.piece_boards[self.side_to_move.idx()][PieceType.Rook.idx()][old_rook_square.as_usize()];
+            self.hash ^= zobrist.TABLE.piece_boards[self.side_to_move.idx()][PieceType.Rook.idx()][new_rook_square.as_usize()];
 
             self.revokeCastlingRight(self.side_to_move, .long);
             self.revokeCastlingRight(self.side_to_move, .short);
         },
         .NORMAL => {},
-    }
-
-    if (move.promotion_piece != null) {
-        self.piece_boards[self.side_to_move.idx()][move.promotion_piece.?.idx()] |= to_mask;
-        self.hash ^= zobrist.TABLE.piece_boards[self.side_to_move.idx()][move.promotion_piece.?.idx()][move.to.as_usize()];
     }
 
     if (self.side_to_move == .Black) self.full_move_counter += 1;
@@ -445,13 +446,13 @@ test "apply" {
 
     const move = Move{ .piece = .Pawn, .from = .e2, .to = .e4, .move_type = .NORMAL };
 
-    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask() != 0);
-    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask(), 0);
+    try t.expect(pos.piece_boards[Color.White.idx()][PieceType.Pawn.idx()] & move.from.mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][PieceType.Pawn.idx()] & move.to.mask(), 0);
 
     pos.apply(move);
 
-    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask(), 0);
-    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][PieceType.Pawn.idx()] & move.from.mask(), 0);
+    try t.expect(pos.piece_boards[Color.White.idx()][PieceType.Pawn.idx()] & move.to.mask() != 0);
 }
 
 test "apply capture" {
@@ -462,13 +463,13 @@ test "apply capture" {
 
     const move = Move{ .piece = .Pawn, .from = .e4, .to = .d5, .move_type = .NORMAL };
 
-    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask() != 0);
-    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask(), 0);
+    try t.expect(pos.piece_boards[Color.White.idx()][PieceType.Pawn.idx()] & move.from.mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][PieceType.Pawn.idx()] & move.to.mask(), 0);
 
     pos.apply(move);
 
-    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.from.mask(), 0);
-    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Pawn.idx()] & move.to.mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][PieceType.Pawn.idx()] & move.from.mask(), 0);
+    try t.expect(pos.piece_boards[Color.White.idx()][PieceType.Pawn.idx()] & move.to.mask() != 0);
 }
 
 test "apply castle" {
@@ -480,11 +481,11 @@ test "apply castle" {
     const move = Move{ .piece = .King, .from = .e1, .to = .g1, .move_type = .CASTLE };
     pos.apply(move);
 
-    try t.expect(pos.piece_boards[Color.White.idx()][Piece.King.idx()] & move.to.mask() != 0);
-    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.King.idx()] & move.from.mask(), 0);
+    try t.expect(pos.piece_boards[Color.White.idx()][PieceType.King.idx()] & move.to.mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][PieceType.King.idx()] & move.from.mask(), 0);
 
-    try t.expect(pos.piece_boards[Color.White.idx()][Piece.Rook.idx()] & Square.f1.mask() != 0);
-    try t.expectEqual(pos.piece_boards[Color.White.idx()][Piece.Rook.idx()] & Square.h1.mask(), 0);
+    try t.expect(pos.piece_boards[Color.White.idx()][PieceType.Rook.idx()] & Square.f1.mask() != 0);
+    try t.expectEqual(pos.piece_boards[Color.White.idx()][PieceType.Rook.idx()] & Square.h1.mask(), 0);
 }
 
 test "apply move counters" {
@@ -543,8 +544,8 @@ test "apply en_passant capture" {
     try pos.go("f7f5");
     try pos.go("e5f6");
 
-    try t.expectEqual(Piece.Pawn, pos.getPieceAt(.b3));
-    try t.expectEqual(null, pos.getPieceAt(.b4));
+    try t.expectEqual(PieceType.Pawn, pos.getPieceAt(.b3));
+    try t.expectEqual(PieceType.NO_PIECE_TYPE, pos.getPieceAt(.b4));
 }
 
 test "apply castling rights king moved" {
@@ -697,7 +698,7 @@ pub fn fromFEN(input: []const u8) !Position {
             return PositionError.InvalidFEN;
         }
 
-        const piece: Piece = switch (char) {
+        const piece: PieceType = switch (char) {
             'p', 'P' => .Pawn,
             'b', 'B' => .Bishop,
             'k', 'K' => .King,
@@ -754,7 +755,7 @@ test "from_fen" {
     const pos_start = Position.start();
 
     for (0..2) |ci| {
-        for (std.enums.values(Piece)) |piece| {
+        for (PieceTypes) |piece| {
             try t.expectEqual(pos_start.piece_boards[ci][piece.idx()], pos.piece_boards[ci][piece.idx()]);
         }
     }
@@ -774,7 +775,7 @@ pub fn print(self: *const Position) void {
     var color_mask: [64]u8 = @splat(32);
 
     inline for (std.enums.values(Color), 0..) |col, ci| {
-        inline for (std.enums.values(Piece), 0..) |piece, pi| {
+        inline for (PieceTypes, 0..) |piece, pi| {
             const bitmask = self.piece_boards[ci][pi];
 
             for (0..64) |i| {

@@ -135,36 +135,39 @@ test "square values" {
     }
 }
 
-pub const Piece = enum(u3) {
+pub const PieceType = enum(u3) {
     Pawn,
     Knight,
     Bishop,
     Rook,
     Queen,
     King,
+    NO_PIECE_TYPE,
 
-    pub fn symbol(self: Piece, color: Color) u21 {
+    pub fn symbol(self: PieceType, color: Color) u21 {
         return switch (color) {
             .Black => switch (self) {
-                Piece.Pawn => 0x2659,
-                Piece.Knight => 0x2658,
-                Piece.Bishop => 0x2657,
-                Piece.Rook => 0x2656,
-                Piece.Queen => 0x2655,
-                Piece.King => 0x2654,
+                PieceType.Pawn => 0x2659,
+                PieceType.Knight => 0x2658,
+                PieceType.Bishop => 0x2657,
+                PieceType.Rook => 0x2656,
+                PieceType.Queen => 0x2655,
+                PieceType.King => 0x2654,
+                else => unreachable,
             },
             .White => switch (self) {
-                Piece.Pawn => 0x265F,
-                Piece.Knight => 0x265E,
-                Piece.Bishop => 0x265D,
-                Piece.Rook => 0x265C,
-                Piece.Queen => 0x265B,
-                Piece.King => 0x265A,
+                PieceType.Pawn => 0x265F,
+                PieceType.Knight => 0x265E,
+                PieceType.Bishop => 0x265D,
+                PieceType.Rook => 0x265C,
+                PieceType.Queen => 0x265B,
+                PieceType.King => 0x265A,
+                else => unreachable,
             },
         };
     }
 
-    fn char(self: Piece) u8 {
+    fn char(self: PieceType) u8 {
         return switch (self) {
             .Knight => 'n',
             .Bishop => 'b',
@@ -174,16 +177,25 @@ pub const Piece = enum(u3) {
         };
     }
 
-    pub fn idx(self: Piece) usize {
+    pub fn idx(self: PieceType) usize {
         return @intFromEnum(self);
     }
 };
 
-pub const PromotionPieces = [_]Piece{
-    Piece.Knight,
-    Piece.Bishop,
-    Piece.Rook,
-    Piece.Queen,
+pub const PieceTypes = [_]PieceType{
+    PieceType.Pawn,
+    PieceType.Knight,
+    PieceType.Bishop,
+    PieceType.Rook,
+    PieceType.Queen,
+    PieceType.King,
+};
+
+pub const PromotionPieceTypes = [_]PieceType{
+    PieceType.Knight,
+    PieceType.Bishop,
+    PieceType.Rook,
+    PieceType.Queen,
 };
 
 pub const MoveType = enum(u2) {
@@ -193,12 +205,12 @@ pub const MoveType = enum(u2) {
 };
 
 pub const Move = struct {
-    piece: Piece,
+    piece: PieceType,
     from: Square,
     to: Square,
     move_type: MoveType = .NORMAL,
-    captured_piece: ?Piece = null,
-    promotion_piece: ?Piece = null,
+    captured_piece: PieceType = .NO_PIECE_TYPE,
+    promotion_piece: PieceType = .NO_PIECE_TYPE,
 
     pub fn uci(self: Move, buffer: *[5]u8) []const u8 {
         buffer[0] = self.from.file_str();
@@ -206,9 +218,9 @@ pub const Move = struct {
         buffer[2] = self.to.file_str();
         buffer[3] = self.to.rank_str();
 
-        if (self.promotion_piece == null) return buffer[0..4];
+        if (self.promotion_piece == .NO_PIECE_TYPE) return buffer[0..4];
 
-        buffer[4] = self.promotion_piece.?.char();
+        buffer[4] = self.promotion_piece.char();
         return buffer[0..5];
     }
 
@@ -223,9 +235,9 @@ pub const Move = struct {
         if (!std.mem.eql(u8, val[0..2], &self.from.str())) return false;
         if (!std.mem.eql(u8, val[2..4], &self.to.str())) return false;
 
-        if (self.promotion_piece != null) {
+        if (self.promotion_piece != .NO_PIECE_TYPE) {
             if (val.len != 5) return false;
-            if (val[4] != self.promotion_piece.?.char()) return false;
+            if (val[4] != self.promotion_piece.char()) return false;
         } else if (val.len != 4) {
             return false;
         }

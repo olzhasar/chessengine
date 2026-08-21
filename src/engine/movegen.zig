@@ -5,11 +5,12 @@ const t = std.testing;
 const types = @import("types.zig");
 const Bitboard = types.Bitboard;
 const Move = types.Move;
-const PromotionPieces = types.PromotionPieces;
+const PromotionPieceTypes = types.PromotionPieceTypes;
+const PieceTypes = types.PieceTypes;
 const MoveType = types.MoveType;
 const Square = types.Square;
 const Color = types.Color;
-const Piece = types.Piece;
+const PieceType = types.PieceType;
 
 const Position = @import("Position.zig");
 
@@ -163,7 +164,7 @@ fn getCastleMoves(from: Square, side: Color, pos: *const Position, occupied: Bit
     return found;
 }
 
-fn getMoveSquares(piece: Piece, from: Square, pos: *const Position, occupied: Bitboard, occupied_self: Bitboard, occupied_enemy: Bitboard) Bitboard {
+fn getMoveSquares(piece: PieceType, from: Square, pos: *const Position, occupied: Bitboard, occupied_self: Bitboard, occupied_enemy: Bitboard) Bitboard {
     var squares = attacks.getAttacks(piece, pos.side_to_move, from, occupied) & ~occupied_self;
 
     if (piece == .Pawn) {
@@ -175,7 +176,7 @@ fn getMoveSquares(piece: Piece, from: Square, pos: *const Position, occupied: Bi
 }
 
 fn findInner(
-    piece: Piece,
+    piece: PieceType,
     from: Square,
     pos: *const Position,
     occupied: Bitboard,
@@ -199,7 +200,7 @@ fn findInner(
 
         if (piece == .Pawn) {
             if ((pos.side_to_move == .White and target.rank() == 7) or (pos.side_to_move == .Black and target.rank() == 0)) {
-                inline for (PromotionPieces) |prom_piece| {
+                inline for (PromotionPieceTypes) |prom_piece| {
                     const move_type: MoveType = if (occupied_enemy & target.mask() != 0) .CAPTURE else .NORMAL;
                     out.append(.{
                         .piece = piece,
@@ -227,7 +228,7 @@ fn findInner(
 }
 
 fn findForPiece(
-    piece: Piece,
+    piece: PieceType,
     from: Square,
     pos: *const Position,
     out: *MoveList,
@@ -333,7 +334,7 @@ test "pawn_promotions" {
 
     for (0..move_list.len) |i| {
         const move = move_list.moves[i];
-        try t.expect(move.promotion_piece != null);
+        try t.expect(move.promotion_piece != .NO_PIECE_TYPE);
         try t.expectEqual(Square.e7, move.from);
         try t.expectEqual(Square.e8, move.to);
     }
@@ -605,7 +606,7 @@ fn findAllInner(pos: *const Position, out: *MoveList, captures_only: bool) void 
     const occupied_self = pos.occupiedBy(pos.side_to_move);
     const occupied_enemy = pos.occupiedBy(pos.sideEnemy());
 
-    inline for (std.enums.values(Piece)) |piece| {
+    inline for (PieceTypes) |piece| {
         var placements = pos.piece_boards[pos.side_to_move.idx()][piece.idx()];
 
         while (placements != 0) : (placements &= placements - 1) {
@@ -679,7 +680,7 @@ pub fn hasMoves(pos: *const Position) bool {
 
     var idx: usize = 0;
 
-    inline for (std.enums.values(Piece)) |piece| {
+    inline for (PieceTypes) |piece| {
         var placements = pos.piece_boards[pos.side_to_move.idx()][piece.idx()];
 
         while (placements != 0) : (placements &= placements - 1) {
@@ -714,7 +715,7 @@ test "starting_moves" {
     try t.expectEqual(20, move_list.len);
 }
 
-fn isAttackedBy(area_mask: Bitboard, piece: Piece, attacker: Color, pos: *const Position, occupied: Bitboard) bool {
+fn isAttackedBy(area_mask: Bitboard, piece: PieceType, attacker: Color, pos: *const Position, occupied: Bitboard) bool {
     var pieces = pos.piece_boards[attacker.idx()][piece.idx()];
     while (pieces != 0) : (pieces &= pieces - 1) {
         const square = Square.from_int(@ctz(pieces));
@@ -729,7 +730,7 @@ fn isAttackedBy(area_mask: Bitboard, piece: Piece, attacker: Color, pos: *const 
 fn isAttacked(area: Bitboard, attacker: Color, pos: *const Position) bool {
     const occupied = pos.occupied();
 
-    inline for (std.enums.values(Piece)) |piece| {
+    inline for (PieceTypes) |piece| {
         if (isAttackedBy(area, piece, attacker, pos, occupied)) return true;
     }
 
@@ -743,27 +744,27 @@ fn isSquareAttacked(square: Square, defender: Color, pos: *const Position) bool 
     const pawn2 = square.rel(-1, defender.pawn_direction());
     if (pawn2 != null) pawn_attacks |= pawn2.?.mask();
 
-    if (pawn_attacks & pos.piece_boards[defender.opp().idx()][Piece.Pawn.idx()] != 0) return true;
+    if (pawn_attacks & pos.piece_boards[defender.opp().idx()][PieceType.Pawn.idx()] != 0) return true;
 
     const knight_attacks = attacks.getAttacksKnight(square);
-    if (knight_attacks & pos.piece_boards[defender.opp().idx()][Piece.Knight.idx()] != 0) return true;
+    if (knight_attacks & pos.piece_boards[defender.opp().idx()][PieceType.Knight.idx()] != 0) return true;
 
     const king_attacks = attacks.getAttacksKing(square);
-    if (king_attacks & pos.piece_boards[defender.opp().idx()][Piece.King.idx()] != 0) return true;
+    if (king_attacks & pos.piece_boards[defender.opp().idx()][PieceType.King.idx()] != 0) return true;
 
     const occupied = pos.occupied();
 
     const attacker_pieces = pos.piece_boards[defender.opp().idx()];
 
     const rook_attacks = attacks.getAttacksRook(square, occupied);
-    if (rook_attacks & (attacker_pieces[Piece.Rook.idx()] | attacker_pieces[Piece.Queen.idx()]) != 0) return true;
+    if (rook_attacks & (attacker_pieces[PieceType.Rook.idx()] | attacker_pieces[PieceType.Queen.idx()]) != 0) return true;
 
     const bishop_attacks = attacks.getAttacksBishop(square, occupied);
-    return bishop_attacks & (attacker_pieces[Piece.Bishop.idx()] | attacker_pieces[Piece.Queen.idx()]) != 0;
+    return bishop_attacks & (attacker_pieces[PieceType.Bishop.idx()] | attacker_pieces[PieceType.Queen.idx()]) != 0;
 }
 
 pub fn isInCheck(pos: *const Position, side: Color) bool {
-    const king_mask = pos.piece_boards[side.idx()][Piece.King.idx()];
+    const king_mask = pos.piece_boards[side.idx()][PieceType.King.idx()];
     if (king_mask == 0) return false;
 
     const king_square = Square.from_int(@ctz(king_mask));
@@ -885,21 +886,23 @@ pub fn isMoveLegal(pos: *const Position, move: Move) bool {
     return false;
 }
 
-inline fn pieceWorth(piece: Piece) i8 {
-    return switch (piece) {
-        .Pawn => 1,
-        .Knight => 3,
-        .Bishop => 3,
-        .Rook => 5,
-        .Queen => 9,
-        .King => 0,
-    };
+const PIECE_WORTH = [_]i8{
+    1,
+    3,
+    3,
+    5,
+    9,
+    0,
+};
+
+inline fn pieceWorth(piece: PieceType) i8 {
+    return PIECE_WORTH[piece.idx()];
 }
 
 fn materialScore(piece_boards: [6]Bitboard) f16 {
     var score: f16 = 0;
 
-    inline for (std.enums.values(Piece)) |piece| {
+    inline for (PieceTypes) |piece| {
         score += @popCount(piece_boards[piece.idx()]) * pieceWorth(piece);
     }
 
@@ -939,10 +942,10 @@ fn movePriority(move: Move) i8 {
     if (move.move_type == .CAPTURE) {
         // https://chessprogramming.org/MVV-LVA
         // TODO: this should somehow account for protected pieces
-        return pieceWorth(move.captured_piece.?) - pieceWorth(move.piece) + 10;
+        return pieceWorth(move.captured_piece) - pieceWorth(move.piece) + 10;
     }
 
-    if (move.promotion_piece != null) return pieceWorth(move.promotion_piece.?);
+    if (move.promotion_piece != .NO_PIECE_TYPE) return pieceWorth(move.promotion_piece);
 
     return 0;
 }
